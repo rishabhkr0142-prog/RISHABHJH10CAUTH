@@ -1,3 +1,5 @@
+import { AUTH_SERVER_URL } from './auth-config';
+
 export type SdkLang =
   | 'csharp'
   | 'cpp'
@@ -363,7 +365,7 @@ end`;
 
     case 'curl':
       return `# Authenticate an Application End User
-curl -X POST http://localhost:3000/api/auth/validate \\
+curl -X POST ${AUTH_SERVER_URL}/api/auth/validate \\
   -H "Content-Type: application/json" \\
   -d '{
     "appName": "${safeAppName}",
@@ -375,7 +377,7 @@ curl -X POST http://localhost:3000/api/auth/validate \\
   }'
 
 # Validate Application Credentials
-curl -X POST http://localhost:3000/api/auth/validate \\
+curl -X POST ${AUTH_SERVER_URL}/api/auth/validate \\
   -H "Content-Type: application/json" \\
   -d '{
     "appName": "${safeAppName}",

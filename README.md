@@ -42,8 +42,9 @@ SUPABASE_SERVICE_ROLE_KEY=your-supabase-service-role-key
 # Secret key used for cryptographic session signing
 AUTH_SECRET=your-random-32-character-secret-key
 
-# Base application URL (Local or Production Vercel domain)
-BASE_URL=http://localhost:3000
+# Base application URL (Hosted Vercel domain)
+BASE_URL=https://rishabhjh-10-cauth.vercel.app
+NEXT_PUBLIC_AUTH_SERVER_URL=https://rishabhjh-10-cauth.vercel.app
 ```
 
 ---
