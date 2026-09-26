@@ -6,6 +6,7 @@ import { copyToClipboardSafe } from '@/lib/clipboard';
 import {
   Layers,
   Users,
+  KeyRound,
   Key,
   Activity,
   Plus,
@@ -47,6 +48,7 @@ export default function DashboardOverviewPage() {
   const [logs, setLogs] = useState<ActivityLog[]>([]);
   const [totalKeys, setTotalKeys] = useState(0);
   const [totalUsers, setTotalUsers] = useState(0);
+  const [totalLicenses, setTotalLicenses] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -95,6 +97,17 @@ export default function DashboardOverviewPage() {
         }
       } catch (e) {
         console.error('Failed to load users count:', e);
+      }
+
+      // 3. Fetch licenses count
+      try {
+        const licRes = await fetch('/api/licenses?limit=1');
+        if (licRes.ok) {
+          const licData = await licRes.json();
+          setTotalLicenses(licData.total || 0);
+        }
+      } catch (e) {
+        console.error('Failed to load licenses count:', e);
       }
     } catch (err: any) {
       console.error(err);
@@ -165,6 +178,13 @@ export default function DashboardOverviewPage() {
         </div>
 
         <div className="flex items-center gap-2.5">
+          <Link
+            href="/dashboard/licenses"
+            className="inline-flex items-center justify-center gap-2 bg-[#1a1a1a] hover:bg-[#252525] border border-[#2a2a2a] text-white px-4 py-2.5 rounded-xl font-medium text-sm transition-all cursor-pointer"
+          >
+            <KeyRound className="h-4 w-4 text-[#ff5f15]" />
+            <span>Manage Licenses</span>
+          </Link>
           <Link
             href="/dashboard/users"
             className="inline-flex items-center justify-center gap-2 bg-[#1a1a1a] hover:bg-[#252525] border border-[#2a2a2a] text-white px-4 py-2.5 rounded-xl font-medium text-sm transition-all cursor-pointer"
@@ -271,23 +291,32 @@ export default function DashboardOverviewPage() {
           </div>
         </div>
 
-        {/* Security Profile */}
-        <div className="bg-[#111111] border border-[#222222] rounded-2xl p-5 relative overflow-hidden">
+        {/* Licenses */}
+        <Link
+          href="/dashboard/licenses"
+          className="bg-[#111111] hover:bg-[#151515] border border-[#222222] hover:border-[#333333] rounded-2xl p-5 relative overflow-hidden transition-all group"
+        >
           <div className="flex items-center justify-between">
             <span className="text-xs font-mono uppercase text-[#727275]">
-              Access Mode
+              Licenses
             </span>
             <div className="h-8 w-8 rounded-xl bg-[#161616] border border-[#222222] flex items-center justify-center text-[#ff5f15]">
-              <Activity className="h-4 w-4" />
+              <KeyRound className="h-4 w-4" />
             </div>
           </div>
           <div className="mt-3">
-            <p className="text-xl font-bold text-white uppercase tracking-wider">
-              Single Owner
+            <p className="text-3xl font-bold text-white">
+              {isLoading ? (
+                <span className="animate-pulse">--</span>
+              ) : (
+                totalLicenses
+              )}
             </p>
-            <p className="text-xs text-[#ff5f15] mt-1">Dedicated Personal</p>
+            <p className="text-xs text-[#727275] mt-1 group-hover:text-[#ff5f15] transition-colors flex items-center gap-1">
+              Active license keys <ArrowRight className="h-3 w-3 inline" />
+            </p>
           </div>
-        </div>
+        </Link>
       </div>
 
       {/* Applications Section */}

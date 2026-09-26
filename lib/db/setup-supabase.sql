@@ -97,6 +97,23 @@ CREATE TABLE IF NOT EXISTS public.application_logs (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- 8. LICENSES
+CREATE TABLE IF NOT EXISTS public.licenses (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  application_id UUID NOT NULL REFERENCES public.applications(id) ON DELETE CASCADE,
+  license_key TEXT NOT NULL UNIQUE,
+  subscription TEXT NOT NULL DEFAULT 'default',
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'used', 'expired', 'revoked')),
+  allowed_devices INTEGER NOT NULL DEFAULT 1,
+  used_devices INTEGER NOT NULL DEFAULT 0,
+  device_hwids TEXT[] DEFAULT '{}',
+  note TEXT,
+  expires_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  revoked_at TIMESTAMPTZ
+);
+
 -- Safe migration & alias view: ensure public.users compatibility
 DO $$
 BEGIN
@@ -190,6 +207,12 @@ CREATE INDEX IF NOT EXISTS idx_webhooks_application_id ON public.webhooks(applic
 CREATE INDEX IF NOT EXISTS idx_application_logs_application_id ON public.application_logs(application_id);
 CREATE INDEX IF NOT EXISTS idx_application_logs_created_at ON public.application_logs(created_at DESC);
 
+CREATE INDEX IF NOT EXISTS idx_licenses_application_id ON public.licenses(application_id);
+CREATE INDEX IF NOT EXISTS idx_licenses_license_key ON public.licenses(license_key);
+CREATE INDEX IF NOT EXISTS idx_licenses_status ON public.licenses(status);
+CREATE INDEX IF NOT EXISTS idx_licenses_subscription ON public.licenses(subscription);
+CREATE INDEX IF NOT EXISTS idx_licenses_created_at ON public.licenses(created_at DESC);
+
 -- ==============================================================================
 -- 3. FUNCTIONS & TRIGGERS
 -- ==============================================================================
@@ -224,6 +247,12 @@ CREATE TRIGGER set_app_users_updated_at
 DROP TRIGGER IF EXISTS set_webhooks_updated_at ON public.webhooks;
 CREATE TRIGGER set_webhooks_updated_at
   BEFORE UPDATE ON public.webhooks
+  FOR EACH ROW
+  EXECUTE FUNCTION public.handle_updated_at();
+
+DROP TRIGGER IF EXISTS set_licenses_updated_at ON public.licenses;
+CREATE TRIGGER set_licenses_updated_at
+  BEFORE UPDATE ON public.licenses
   FOR EACH ROW
   EXECUTE FUNCTION public.handle_updated_at();
 
@@ -396,6 +425,23 @@ CREATE POLICY "Owner can manage application_logs" ON public.application_logs
   FOR ALL TO authenticated
   USING (public.is_owner())
   WITH CHECK (public.is_owner());
+
+-- Licenses: Owner has full CRUD on licenses belonging to their applications
+DROP POLICY IF EXISTS "Owner can manage licenses" ON public.licenses;
+CREATE POLICY "Owner can manage licenses" ON public.licenses
+  FOR ALL TO authenticated
+  USING (
+    public.is_owner() AND EXISTS (
+      SELECT 1 FROM public.applications
+      WHERE id = licenses.application_id AND owner_id = auth.uid()
+    )
+  )
+  WITH CHECK (
+    public.is_owner() AND EXISTS (
+      SELECT 1 FROM public.applications
+      WHERE id = licenses.application_id AND owner_id = auth.uid()
+    )
+  );
 
 -- ==============================================================================
 -- 5. GRANTS

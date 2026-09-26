@@ -8,6 +8,7 @@ import {
   LayoutDashboard,
   Layers,
   Users,
+  KeyRound,
   Key,
   Webhook,
   FileText,
@@ -55,12 +56,13 @@ export default function DashboardClientShell({
 
   const navItems = [
     { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    { href: '/dashboard/applications', label: 'Applications', icon: Layers },
     { href: '/dashboard/users', label: 'Users', icon: Users },
-    { href: '/dashboard/integration', label: 'Integration', icon: Code2 },
+    { href: '/dashboard/licenses', label: 'Licenses', icon: KeyRound },
+    { href: '/dashboard/applications', label: 'Applications', icon: Layers },
     { href: '/dashboard/keys', label: 'API Keys', icon: Key },
     { href: '/dashboard/webhooks', label: 'Webhooks', icon: Webhook },
     { href: '/dashboard/logs', label: 'Logs', icon: FileText },
+    { href: '/dashboard/integration', label: 'Integration', icon: Code2 },
     { href: '/dashboard/docs', label: 'Documentation', icon: BookOpen },
     { href: '/dashboard/settings', label: 'Settings', icon: Settings }
   ];

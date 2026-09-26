@@ -77,6 +77,24 @@ export type EndUser = {
   last_login_at: string | null;
 };
 
+export type LicenseStatus = 'active' | 'used' | 'expired' | 'revoked';
+
+export type License = {
+  id: string;
+  application_id: string;
+  license_key: string;
+  subscription: string;
+  status: LicenseStatus;
+  allowed_devices: number;
+  used_devices: number;
+  device_hwids: string[] | null;
+  note: string | null;
+  expires_at: string | null;
+  created_at: string;
+  updated_at: string;
+  revoked_at: string | null;
+};
+
 export interface Database {
   public: {
     Tables: {
@@ -260,6 +278,40 @@ export interface Database {
           metadata?: Json | null;
           ip_address?: string | null;
           created_at?: string;
+        };
+        Relationships: [];
+      };
+      licenses: {
+        Row: License;
+        Insert: {
+          id?: string;
+          application_id: string;
+          license_key: string;
+          subscription?: string;
+          status?: LicenseStatus;
+          allowed_devices?: number;
+          used_devices?: number;
+          device_hwids?: string[] | null;
+          note?: string | null;
+          expires_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          revoked_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          application_id?: string;
+          license_key?: string;
+          subscription?: string;
+          status?: LicenseStatus;
+          allowed_devices?: number;
+          used_devices?: number;
+          device_hwids?: string[] | null;
+          note?: string | null;
+          expires_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          revoked_at?: string | null;
         };
         Relationships: [];
       };

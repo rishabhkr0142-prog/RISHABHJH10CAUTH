@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { Users, AlertCircle, Eye, EyeOff, Check, Copy } from 'lucide-react';
 import { copyToClipboardSafe } from '@/lib/clipboard';
+import { AVAILABLE_SUBSCRIPTIONS } from '@/lib/subscriptions';
 
 export interface ApplicationOption {
   id: string;
@@ -353,11 +354,11 @@ export default function CreateUserModal({
                 required
                 className="w-full px-3 py-2 rounded-xl bg-[#111111] border border-[#282828] text-xs text-white focus:outline-none focus:border-[#ff5f15]/50 transition-colors cursor-pointer"
               >
-                <option value="default">default</option>
-                <option value="standard">standard</option>
-                <option value="premium">premium</option>
-                <option value="vip">vip</option>
-                <option value="enterprise">enterprise</option>
+                {AVAILABLE_SUBSCRIPTIONS.map((tier) => (
+                  <option key={tier.id} value={tier.id}>
+                    {tier.name}
+                  </option>
+                ))}
               </select>
             </div>
 

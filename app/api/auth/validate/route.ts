@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { hashSecret, verifySecret, verifyUserPassword } from '@/lib/crypto';
-import type { ApiKey, Application, EndUser } from '@/lib/supabase/types';
+import type { ApiKey, Application, EndUser, License } from '@/lib/supabase/types';
 
 export async function POST(request: Request) {
   try {
@@ -217,6 +217,116 @@ export async function POST(request: Request) {
             status: user.status,
             created_at: user.created_at,
             last_login_at: loginTimestamp
+          },
+          application: {
+            id: app.id,
+            name: app.name,
+            client_id: app.client_id
+          }
+        });
+      }
+
+      // License Authentication / Validation action
+      if (action === 'validate_license' || body.license_key) {
+        const rawKey = String(body.license_key || body.license || '').trim();
+        const hwid = body.hwid ? String(body.hwid).trim() : null;
+
+        if (!rawKey) {
+          return NextResponse.json(
+            { valid: false, error: 'License key is required' },
+            { status: 400 }
+          );
+        }
+
+        const { data: licenseRecord, error: licErr } = await admin
+          .from('licenses')
+          .select('*')
+          .eq('application_id', app.id)
+          .eq('license_key', rawKey)
+          .maybeSingle();
+
+        if (licErr || !licenseRecord) {
+          return NextResponse.json(
+            { valid: false, error: 'Invalid license key' },
+            { status: 401 }
+          );
+        }
+
+        const license = licenseRecord as License;
+
+        if (license.status === 'revoked') {
+          return NextResponse.json(
+            { valid: false, error: 'License has been revoked' },
+            { status: 403 }
+          );
+        }
+
+        const now = new Date();
+        if (license.expires_at && new Date(license.expires_at) < now) {
+          if (license.status !== 'expired') {
+            await admin
+              .from('licenses')
+              .update({ status: 'expired', updated_at: now.toISOString() })
+              .eq('id', license.id);
+          }
+          return NextResponse.json(
+            { valid: false, error: 'License has expired', expires_at: license.expires_at },
+            { status: 403 }
+          );
+        }
+
+        // Multi-HWID validation
+        const currentHwids = license.device_hwids || [];
+        let updatedHwids = [...currentHwids];
+        let usedDevices = license.used_devices || currentHwids.length;
+
+        if (hwid) {
+          const hwidKnown = currentHwids.includes(hwid);
+          if (!hwidKnown) {
+            if (usedDevices >= license.allowed_devices) {
+              return NextResponse.json(
+                {
+                  valid: false,
+                  error: `Device limit reached. License is limited to ${license.allowed_devices} device(s).`
+                },
+                { status: 403 }
+              );
+            }
+            updatedHwids.push(hwid);
+            usedDevices = updatedHwids.length;
+            await admin
+              .from('licenses')
+              .update({
+                device_hwids: updatedHwids,
+                used_devices: usedDevices,
+                status: 'used',
+                updated_at: new Date().toISOString()
+              })
+              .eq('id', license.id);
+          }
+        }
+
+        await admin.from('application_logs').insert({
+          application_id: app.id,
+          event: 'license.validated',
+          metadata: {
+            licenseId: license.id,
+            subscription: license.subscription,
+            hwid: hwid ? `${hwid.slice(0, 4)}...` : null
+          }
+        });
+
+        return NextResponse.json({
+          valid: true,
+          type: 'license_validation',
+          license: {
+            id: license.id,
+            license_key: license.license_key,
+            subscription: license.subscription,
+            status: license.status === 'active' && hwid ? 'used' : license.status,
+            expires_at: license.expires_at,
+            allowed_devices: license.allowed_devices,
+            used_devices: usedDevices
           },
           application: {
             id: app.id,
