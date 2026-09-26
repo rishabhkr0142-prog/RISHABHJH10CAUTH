@@ -235,7 +235,7 @@ export default function ApplicationDetailPage({
   const [sellerKeyToAction, setSellerKeyToAction] = useState<{
     id: string;
     name: string;
-    action: 'revoke' | 'regenerate';
+    action: 'revoke' | 'regenerate' | 'delete';
   } | null>(null);
   const [isProcessingSellerKeyAction, setIsProcessingSellerKeyAction] = useState(false);
   const [sellerKeyActionError, setSellerKeyActionError] = useState<string | null>(null);
@@ -244,6 +244,11 @@ export default function ApplicationDetailPage({
     name: string;
   } | null>(null);
   const [copiedRegeneratedSellerKey, setCopiedRegeneratedSellerKey] = useState(false);
+
+  // Webhook Delete State
+  const [webhookToDelete, setWebhookToDelete] = useState<{ id: string; url: string } | null>(null);
+  const [isDeletingWebhook, setIsDeletingWebhook] = useState(false);
+  const [deleteWebhookError, setDeleteWebhookError] = useState<string | null>(null);
 
   // Load application details
   async function loadApplication() {
@@ -357,12 +362,20 @@ export default function ApplicationDetailPage({
           rawKey: data.rawKey,
           name: data.sellerKey.name
         });
-        setSellerKeyToAction(null);
-        loadSellerKeys();
+      } else if (sellerKeyToAction.action === 'delete') {
+        const res = await fetch(
+          `/api/applications/${id}/seller-keys/${sellerKeyToAction.id}?action=delete`,
+          { method: 'DELETE' }
+        );
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Failed to delete seller key');
+        const deletedId = sellerKeyToAction.id;
+        setSellerKeys((prev) => prev.filter((k) => k.id !== deletedId));
         setToastNotification({
           type: 'success',
-          text: 'Seller key regenerated successfully. Previous key was revoked.'
+          text: data.message || `Seller key "${sellerKeyToAction.name}" was permanently removed.`
         });
+        setSellerKeyToAction(null);
       }
     } catch (err: any) {
       setSellerKeyActionError(err.message || 'Action failed');
@@ -711,19 +724,40 @@ export default function ApplicationDetailPage({
     }
   }
 
-  async function handleDeleteWebhook(webhookId: string) {
-    if (!confirm('Are you sure you want to delete this webhook endpoint?')) return;
+  function promptDeleteWebhook(webhook: { id: string; url: string }) {
+    setDeleteWebhookError(null);
+    setWebhookToDelete(webhook);
+  }
+
+  async function executeDeleteWebhook() {
+    if (!webhookToDelete) return;
+    setIsDeletingWebhook(true);
+    setDeleteWebhookError(null);
     try {
-      const res = await fetch(`/api/applications/${id}/webhooks/${webhookId}`, {
+      const res = await fetch(`/api/applications/${id}/webhooks/${webhookToDelete.id}`, {
         method: 'DELETE'
       });
+      const data = await res.json();
       if (!res.ok) {
-        const data = await res.json();
         throw new Error(data.error || 'Failed to delete webhook');
       }
-      loadApplication();
+      setApp((prev) =>
+        prev
+          ? {
+              ...prev,
+              webhooks: prev.webhooks.filter((w) => w.id !== webhookToDelete.id)
+            }
+          : null
+      );
+      setToastNotification({
+        type: 'success',
+        text: 'Webhook endpoint deleted successfully.'
+      });
+      setWebhookToDelete(null);
     } catch (err: any) {
-      alert(err.message);
+      setDeleteWebhookError(err.message || 'Error deleting webhook');
+    } finally {
+      setIsDeletingWebhook(false);
     }
   }
 
@@ -1772,9 +1806,21 @@ NOTIFY pgrst, 'reload schema';`, 'sql_migration')}
                                     Regenerate
                                   </button>
                                 </>
-                              ) : (
-                                <span className="text-xs text-[#555555] italic">Revoked</span>
-                              )}
+                              ) : null}
+                              <button
+                                onClick={() => {
+                                  setSellerKeyActionError(null);
+                                  setSellerKeyToAction({
+                                    id: sk.id,
+                                    name: sk.name,
+                                    action: 'delete'
+                                  });
+                                }}
+                                className="p-1.5 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 text-xs font-semibold transition-colors cursor-pointer"
+                                title="Permanently Delete Seller Key"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
                             </div>
                           </td>
                         </tr>
@@ -1916,8 +1962,9 @@ NOTIFY pgrst, 'reload schema';`, 'sql_migration')}
                     </div>
                   </div>
                   <button
-                    onClick={() => handleDeleteWebhook(w.id)}
+                    onClick={() => promptDeleteWebhook(w)}
                     className="p-1.5 rounded-lg bg-[#202020] hover:bg-red-500/20 text-[#888888] hover:text-red-400 transition-colors cursor-pointer"
+                    title="Delete Webhook Endpoint"
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
@@ -2367,6 +2414,7 @@ NOTIFY pgrst, 'reload schema';`, 'sql_migration')}
               <p className="font-medium text-[#aaaaaa]">The following records will be permanently deleted:</p>
               <ul className="list-disc pl-4 space-y-0.5 text-[11px]">
                 <li>Application Client ID & Client Secret hash</li>
+                <li>All software licenses & seller keys</li>
                 <li>All {users.length} registered application users</li>
                 <li>All {app.api_keys?.length || 0} API keys & access tokens</li>
                 <li>All {app.webhooks?.length || 0} webhooks & {app.redirect_urls?.length || 0} redirect URLs</li>
@@ -2620,19 +2668,23 @@ NOTIFY pgrst, 'reload schema';`, 'sql_migration')}
         </div>
       )}
 
-      {/* SELLER KEY ACTION MODAL (REVOKE OR REGENERATE) */}
+      {/* SELLER KEY ACTION MODAL (REVOKE, REGENERATE, OR DELETE) */}
       {sellerKeyToAction && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
           <div className="w-full max-w-md rounded-2xl bg-[#161616] border border-[#2a2a2a] p-6 shadow-2xl space-y-5">
             <div className="flex items-center gap-3">
               <div
                 className={`h-10 w-10 rounded-xl flex items-center justify-center ${
-                  sellerKeyToAction.action === 'regenerate'
+                  sellerKeyToAction.action === 'delete'
+                    ? 'bg-red-500/10 border border-red-500/20 text-red-400'
+                    : sellerKeyToAction.action === 'regenerate'
                     ? 'bg-blue-500/10 border border-blue-500/20 text-blue-400'
                     : 'bg-amber-500/10 border border-amber-500/20 text-amber-400'
                 }`}
               >
-                {sellerKeyToAction.action === 'regenerate' ? (
+                {sellerKeyToAction.action === 'delete' ? (
+                  <Trash2 className="h-5 w-5" />
+                ) : sellerKeyToAction.action === 'regenerate' ? (
                   <RefreshCw className="h-5 w-5" />
                 ) : (
                   <Ban className="h-5 w-5" />
@@ -2640,12 +2692,16 @@ NOTIFY pgrst, 'reload schema';`, 'sql_migration')}
               </div>
               <div>
                 <h3 className="font-bold text-white text-base">
-                  {sellerKeyToAction.action === 'regenerate'
+                  {sellerKeyToAction.action === 'delete'
+                    ? 'Delete Seller Key?'
+                    : sellerKeyToAction.action === 'regenerate'
                     ? 'Regenerate Seller Key?'
                     : 'Revoke Seller Key?'}
                 </h3>
                 <p className="text-xs text-[#727275]">
-                  {sellerKeyToAction.action === 'regenerate'
+                  {sellerKeyToAction.action === 'delete'
+                    ? 'Permanent deletion from database'
+                    : sellerKeyToAction.action === 'regenerate'
                     ? 'Generates a new key and invalidates previous'
                     : 'Immediately invalidates access'}
                 </p>
@@ -2653,7 +2709,12 @@ NOTIFY pgrst, 'reload schema';`, 'sql_migration')}
             </div>
 
             <p className="text-sm text-[#aaaaaa]">
-              {sellerKeyToAction.action === 'regenerate' ? (
+              {sellerKeyToAction.action === 'delete' ? (
+                <>
+                  Delete this seller key permanently? This action cannot be undone. External bots using{' '}
+                  <strong className="text-white">{sellerKeyToAction.name}</strong> will immediately lose access permanently.
+                </>
+              ) : sellerKeyToAction.action === 'regenerate' ? (
                 <>
                   Regenerating will immediately invalidate the current Seller Key for{' '}
                   <strong className="text-white">{sellerKeyToAction.name}</strong> and create a new key.
@@ -2687,16 +2748,70 @@ NOTIFY pgrst, 'reload schema';`, 'sql_migration')}
                 onClick={executeSellerKeyAction}
                 disabled={isProcessingSellerKeyAction}
                 className={`px-4 py-2.5 rounded-xl text-xs font-semibold text-white transition-all cursor-pointer disabled:opacity-50 ${
-                  sellerKeyToAction.action === 'regenerate'
+                  sellerKeyToAction.action === 'delete'
+                    ? 'bg-red-600 hover:bg-red-700 shadow-[0_0_15px_rgba(220,38,38,0.2)]'
+                    : sellerKeyToAction.action === 'regenerate'
                     ? 'bg-blue-600 hover:bg-blue-700 shadow-[0_0_15px_rgba(37,99,235,0.2)]'
                     : 'bg-amber-600 hover:bg-amber-700 shadow-[0_0_15px_rgba(217,119,6,0.2)]'
                 }`}
               >
                 {isProcessingSellerKeyAction
                   ? 'Processing...'
+                  : sellerKeyToAction.action === 'delete'
+                  ? 'Delete Seller Key'
                   : sellerKeyToAction.action === 'regenerate'
                   ? 'Regenerate Key'
                   : 'Revoke Key'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* WEBHOOK DELETE CONFIRMATION MODAL */}
+      {webhookToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
+          <div className="w-full max-w-md rounded-2xl bg-[#161616] border border-[#2a2a2a] p-6 shadow-2xl space-y-5">
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 flex items-center justify-center">
+                <Trash2 className="h-5 w-5" />
+              </div>
+              <div>
+                <h3 className="font-bold text-white text-base">Delete Webhook Endpoint?</h3>
+                <p className="text-xs text-[#727275]">Permanent deletion</p>
+              </div>
+            </div>
+
+            <p className="text-sm text-[#aaaaaa]">
+              This webhook endpoint will be permanently deleted. This action cannot be undone.
+            </p>
+
+            <div className="p-3 rounded-xl bg-[#111111] border border-[#222222]">
+              <code className="font-mono text-xs text-white break-all">{webhookToDelete.url}</code>
+            </div>
+
+            {deleteWebhookError && (
+              <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-xs">
+                {deleteWebhookError}
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#222222]">
+              <button
+                type="button"
+                onClick={() => setWebhookToDelete(null)}
+                disabled={isDeletingWebhook}
+                className="px-4 py-2.5 rounded-xl bg-[#1f1f1f] hover:bg-[#282828] text-xs font-semibold text-[#888888] hover:text-white transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={executeDeleteWebhook}
+                disabled={isDeletingWebhook}
+                className="px-4 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-xs font-semibold text-white transition-all shadow-[0_0_15px_rgba(220,38,38,0.2)] cursor-pointer disabled:opacity-50"
+              >
+                {isDeletingWebhook ? 'Deleting...' : 'Delete Webhook'}
               </button>
             </div>
           </div>

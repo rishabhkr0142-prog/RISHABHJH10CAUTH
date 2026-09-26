@@ -7,6 +7,7 @@ import { AVAILABLE_SUBSCRIPTIONS, getSubscriptionDetails } from '@/lib/subscript
 import GenerateLicenseModal from '@/components/generate-license-modal';
 import LicenseDetailsModal, { type LicenseDetailData } from '@/components/license-details-modal';
 import RevokeLicenseModal from '@/components/revoke-license-modal';
+import DeleteLicenseModal from '@/components/delete-license-modal';
 import {
   KeyRound,
   Search,
@@ -17,6 +18,7 @@ import {
   Check,
   Eye,
   Ban,
+  Trash2,
   AlertCircle,
   AlertTriangle,
   Clock,
@@ -56,6 +58,7 @@ export default function LicensesPage() {
   const [isGenerateOpen, setIsGenerateOpen] = useState(false);
   const [activeDetailsLicense, setActiveDetailsLicense] = useState<LicenseDetailData | null>(null);
   const [activeRevokeLicense, setActiveRevokeLicense] = useState<LicenseDetailData | null>(null);
+  const [activeDeleteLicense, setActiveDeleteLicense] = useState<LicenseDetailData | null>(null);
 
   // Inline copy state for license key
   const [copiedKeyId, setCopiedKeyId] = useState<string | null>(null);
@@ -130,6 +133,22 @@ export default function LicensesPage() {
       prev.map((lic) => (lic.id === revokedLicense.id ? { ...lic, status: 'revoked' } : lic))
     );
     showToast('License was successfully revoked.');
+  }
+
+  function handleLicenseDeleted(deletedId: string) {
+    setLicenses((prev) => prev.filter((lic) => lic.id !== deletedId));
+    setTotalCount((prev) => Math.max(0, prev - 1));
+    showToast('License was permanently deleted.');
+    setActiveDeleteLicense(null);
+    if (activeDetailsLicense?.id === deletedId) {
+      setActiveDetailsLicense(null);
+    }
+    // If last license on current page was removed and we're past page 1, retreat one page
+    if (licenses.length <= 1 && currentPage > 1) {
+      const prevPage = currentPage - 1;
+      setCurrentPage(prevPage);
+      fetchLicenses(prevPage);
+    }
   }
 
   function showToast(msg: string) {
@@ -550,17 +569,24 @@ export default function LicensesPage() {
                             <button
                               type="button"
                               onClick={() => setActiveRevokeLicense(lic)}
-                              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-red-950/30 hover:bg-red-900/40 border border-red-900/40 text-xs font-medium text-red-400 transition-colors cursor-pointer"
+                              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-amber-950/30 hover:bg-amber-900/40 border border-amber-900/40 text-xs font-medium text-amber-400 transition-colors cursor-pointer"
                               title="Revoke License"
                             >
                               <Ban className="h-3.5 w-3.5" />
                               <span className="hidden sm:inline">Revoke</span>
                             </button>
-                          ) : (
-                            <span className="text-[11px] text-red-500/70 italic px-2 py-1">
-                              Revoked
-                            </span>
-                          )}
+                          ) : null}
+
+                          {/* Delete */}
+                          <button
+                            type="button"
+                            onClick={() => setActiveDeleteLicense(lic)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-red-950/30 hover:bg-red-900/40 border border-red-900/40 text-xs font-medium text-red-400 transition-colors cursor-pointer"
+                            title="Permanently Delete License"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                            <span className="hidden sm:inline">Delete</span>
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -635,6 +661,7 @@ export default function LicensesPage() {
         onClose={() => setActiveDetailsLicense(null)}
         license={activeDetailsLicense}
         onRevokeClick={(lic) => setActiveRevokeLicense(lic)}
+        onDeleteClick={(lic) => setActiveDeleteLicense(lic)}
       />
 
       <RevokeLicenseModal
@@ -642,6 +669,13 @@ export default function LicensesPage() {
         onClose={() => setActiveRevokeLicense(null)}
         license={activeRevokeLicense}
         onRevoked={handleLicenseRevoked}
+      />
+
+      <DeleteLicenseModal
+        isOpen={Boolean(activeDeleteLicense)}
+        onClose={() => setActiveDeleteLicense(null)}
+        license={activeDeleteLicense}
+        onDeleted={handleLicenseDeleted}
       />
     </div>
   );

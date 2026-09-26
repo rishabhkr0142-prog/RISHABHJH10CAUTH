@@ -161,7 +161,8 @@ export async function PATCH(
 }
 
 /**
- * DELETE acts as a revocation to preserve audit history as required.
+ * DELETE permanently deletes the license from the database.
+ * If query param ?action=revoke is provided, it soft-revokes instead.
  */
 export async function DELETE(
   request: Request,
@@ -173,6 +174,13 @@ export async function DELETE(
   }
 
   const { id } = await params;
+  if (!id) {
+    return NextResponse.json({ error: 'License ID is required' }, { status: 400 });
+  }
+
+  const { searchParams } = new URL(request.url);
+  const action = searchParams.get('action')?.toLowerCase() || 'delete';
+
   const admin = createAdminClient();
 
   const { data: licenseRecord } = await admin
@@ -197,32 +205,57 @@ export async function DELETE(
     return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
   }
 
-  // Preserve record for audit purposes, mark as revoked
-  const now = new Date().toISOString();
-  const { data: revokedLic, error: revokeErr } = await admin
-    .from('licenses')
-    .update({
-      status: 'revoked',
-      revoked_at: now,
-      updated_at: now
-    })
-    .eq('id', id)
-    .select()
-    .single();
+  if (action === 'revoke') {
+    const now = new Date().toISOString();
+    const { data: revokedLic, error: revokeErr } = await admin
+      .from('licenses')
+      .update({
+        status: 'revoked',
+        revoked_at: now,
+        updated_at: now
+      })
+      .eq('id', id)
+      .select()
+      .single();
 
-  if (revokeErr) {
-    return NextResponse.json({ error: revokeErr.message }, { status: 500 });
+    if (revokeErr) {
+      return NextResponse.json({ error: revokeErr.message }, { status: 500 });
+    }
+
+    await logApplicationEvent({
+      applicationId: license.application_id,
+      event: 'license.revoked',
+      metadata: { licenseId: id, licenseKeySuffix: license.license_key.slice(-4) }
+    });
+
+    return NextResponse.json({
+      success: true,
+      action: 'revoked',
+      message: 'License successfully revoked. Record stored for audit history.',
+      license: revokedLic
+    });
+  }
+
+  // Permanent Delete
+  const { error: delErr } = await admin
+    .from('licenses')
+    .delete()
+    .eq('id', id);
+
+  if (delErr) {
+    return NextResponse.json({ error: delErr.message }, { status: 500 });
   }
 
   await logApplicationEvent({
     applicationId: license.application_id,
-    event: 'license.revoked',
-    metadata: { licenseId: id }
+    event: 'license.deleted',
+    metadata: { licenseId: id, licenseKeySuffix: license.license_key.slice(-4) }
   });
 
   return NextResponse.json({
     success: true,
-    message: 'License successfully revoked. Record stored for audit history.',
-    license: revokedLic
+    action: 'deleted',
+    message: 'License was permanently deleted.',
+    deletedId: id
   });
 }

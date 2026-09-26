@@ -541,6 +541,7 @@ export default function ApplicationsPage() {
               <p className="font-medium text-[#aaaaaa]">The following records will be permanently deleted:</p>
               <ul className="list-disc pl-4 space-y-0.5 text-[11px]">
                 <li>Client ID: <span className="font-mono text-[#ff5f15]">{appToDelete.client_id}</span></li>
+                <li>All software licenses & seller keys</li>
                 <li>All application end users & password credentials</li>
                 <li>All associated API keys & tokens</li>
                 <li>All webhooks & redirect URLs</li>

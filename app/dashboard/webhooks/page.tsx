@@ -18,6 +18,11 @@ export default function WebhooksPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Delete modal state
+  const [webhookToDelete, setWebhookToDelete] = useState<WebhookItem | null>(null);
+  const [isDeletingWebhook, setIsDeletingWebhook] = useState(false);
+  const [deleteWebhookError, setDeleteWebhookError] = useState<string | null>(null);
+
   async function loadWebhooks() {
     setIsLoading(true);
     setError(null);
@@ -66,16 +71,25 @@ export default function WebhooksPage() {
     }
   }
 
-  async function handleDeleteWebhook(appId: string, webhookId: string) {
-    if (!confirm('Delete this webhook endpoint?')) return;
+  async function executeDeleteWebhook() {
+    if (!webhookToDelete) return;
+    setIsDeletingWebhook(true);
+    setDeleteWebhookError(null);
     try {
-      const res = await fetch(`/api/applications/${appId}/webhooks/${webhookId}`, {
-        method: 'DELETE'
-      });
-      if (!res.ok) throw new Error('Failed to delete webhook');
-      loadWebhooks();
+      const res = await fetch(
+        `/api/applications/${webhookToDelete.application_id}/webhooks/${webhookToDelete.id}`,
+        { method: 'DELETE' }
+      );
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Failed to delete webhook');
+      }
+      setWebhooks((prev) => prev.filter((w) => w.id !== webhookToDelete.id));
+      setWebhookToDelete(null);
     } catch (err: any) {
-      alert(err.message);
+      setDeleteWebhookError(err.message || 'Error deleting webhook');
+    } finally {
+      setIsDeletingWebhook(false);
     }
   }
 
@@ -166,8 +180,11 @@ export default function WebhooksPage() {
                   </button>
 
                   <button
-                    onClick={() => handleDeleteWebhook(w.application_id, w.id)}
-                    className="p-1.5 rounded-lg text-[#727275] hover:text-red-400 hover:bg-red-950/20 transition-colors"
+                    onClick={() => {
+                      setDeleteWebhookError(null);
+                      setWebhookToDelete(w);
+                    }}
+                    className="p-1.5 rounded-lg text-[#727275] hover:text-red-400 hover:bg-red-950/20 transition-colors cursor-pointer"
                     title="Delete Webhook"
                   >
                     <Trash2 className="h-3.5 w-3.5" />
@@ -178,6 +195,61 @@ export default function WebhooksPage() {
           </div>
         )}
       </div>
+
+      {/* DELETE WEBHOOK CONFIRMATION MODAL */}
+      {webhookToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
+          <div className="w-full max-w-md rounded-2xl bg-[#161616] border border-[#2a2a2a] p-6 shadow-2xl space-y-5">
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 flex items-center justify-center">
+                <Trash2 className="h-5 w-5" />
+              </div>
+              <div>
+                <h3 className="font-bold text-white text-base">Delete Webhook Endpoint?</h3>
+                <p className="text-xs text-[#727275]">Permanent deletion</p>
+              </div>
+            </div>
+
+            <p className="text-sm text-[#aaaaaa]">
+              This webhook endpoint will be permanently deleted. This action cannot be undone.
+            </p>
+
+            <div className="p-3.5 rounded-xl bg-[#111111] border border-[#222222] space-y-1">
+              <span className="text-[11px] font-medium text-[#727275]">
+                Target Application: <strong className="text-white font-sans">{webhookToDelete.application_name}</strong>
+              </span>
+              <div className="font-mono text-xs text-white break-all pt-1">
+                {webhookToDelete.url}
+              </div>
+            </div>
+
+            {deleteWebhookError && (
+              <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-xs">
+                {deleteWebhookError}
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#222222]">
+              <button
+                type="button"
+                onClick={() => setWebhookToDelete(null)}
+                disabled={isDeletingWebhook}
+                className="px-4 py-2.5 rounded-xl bg-[#1f1f1f] hover:bg-[#282828] text-xs font-semibold text-[#888888] hover:text-white transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={executeDeleteWebhook}
+                disabled={isDeletingWebhook}
+                className="px-4 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-xs font-semibold text-white transition-all shadow-[0_0_15px_rgba(220,38,38,0.2)] cursor-pointer disabled:opacity-50"
+              >
+                {isDeletingWebhook ? 'Deleting...' : 'Delete Webhook'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

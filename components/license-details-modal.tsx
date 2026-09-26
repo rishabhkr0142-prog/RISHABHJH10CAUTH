@@ -13,6 +13,7 @@ import {
   Laptop,
   AlertTriangle,
   Ban,
+  Trash2,
   FileText,
   ShieldCheck,
   CheckCircle2,
@@ -46,13 +47,15 @@ interface LicenseDetailsModalProps {
   onClose: () => void;
   license: LicenseDetailData | null;
   onRevokeClick?: (license: LicenseDetailData) => void;
+  onDeleteClick?: (license: LicenseDetailData) => void;
 }
 
 export default function LicenseDetailsModal({
   isOpen,
   onClose,
   license,
-  onRevokeClick
+  onRevokeClick,
+  onDeleteClick
 }: LicenseDetailsModalProps) {
   const [copiedKey, setCopiedKey] = useState(false);
 
@@ -289,21 +292,35 @@ export default function LicenseDetailsModal({
 
         {/* Modal Footer */}
         <div className="p-5 border-t border-[#242424] bg-[#121212]/80 flex items-center justify-between gap-3">
-          {license.status !== 'revoked' && onRevokeClick ? (
-            <button
-              type="button"
-              onClick={() => {
-                onClose();
-                onRevokeClick(license);
-              }}
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-red-950/40 hover:bg-red-900/50 text-red-400 border border-red-900/50 text-xs font-semibold transition-colors cursor-pointer"
-            >
-              <Ban className="h-3.5 w-3.5" />
-              <span>Revoke License</span>
-            </button>
-          ) : (
-            <div />
-          )}
+          <div className="flex items-center gap-2">
+            {license.status !== 'revoked' && onRevokeClick && (
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onRevokeClick(license);
+                }}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-amber-950/40 hover:bg-amber-900/50 text-amber-400 border border-amber-900/50 text-xs font-semibold transition-colors cursor-pointer"
+              >
+                <Ban className="h-3.5 w-3.5" />
+                <span>Revoke License</span>
+              </button>
+            )}
+
+            {onDeleteClick && (
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onDeleteClick(license);
+                }}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-red-950/40 hover:bg-red-900/50 text-red-400 border border-red-900/50 text-xs font-semibold transition-colors cursor-pointer"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                <span>Delete License</span>
+              </button>
+            )}
+          </div>
 
           <button
             type="button"

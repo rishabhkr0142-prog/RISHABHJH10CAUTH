@@ -197,6 +197,8 @@ export async function DELETE(
     }
 
     // 2. Explicitly delete dependent records in safe dependency order to prevent FK restriction errors & orphaned data
+    await admin.from('licenses').delete().eq('application_id', id);
+    await admin.from('seller_keys').delete().eq('application_id', id);
     await admin.from('application_logs').delete().eq('application_id', id);
     await admin.from('webhooks').delete().eq('application_id', id);
     await admin.from('redirect_urls').delete().eq('application_id', id);
