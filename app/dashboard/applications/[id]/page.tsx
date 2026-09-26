@@ -34,8 +34,11 @@ import {
   Filter,
   Terminal,
   Settings,
-  Fingerprint
+  Fingerprint,
+  Bot,
+  KeyRound
 } from 'lucide-react';
+import type { SellerKey } from '@/lib/supabase/types';
 
 interface ApplicationDetail {
   id: string;
@@ -93,6 +96,7 @@ type TabType =
   | 'credentials'
   | 'users'
   | 'keys'
+  | 'seller-keys'
   | 'redirects'
   | 'webhooks'
   | 'logs'
@@ -213,6 +217,34 @@ export default function ApplicationDetailPage({
   // Integration tab language state
   const [integrationLang, setIntegrationLang] = useState<SdkLang>('csharp');
 
+  // SELLER KEYS STATE
+  const [sellerKeys, setSellerKeys] = useState<SellerKey[]>([]);
+  const [isLoadingSellerKeys, setIsLoadingSellerKeys] = useState(false);
+  const [sellerKeysError, setSellerKeysError] = useState<string | null>(null);
+  const [sellerTableMissing, setSellerTableMissing] = useState(false);
+  const [isGenerateSellerKeyModalOpen, setIsGenerateSellerKeyModalOpen] = useState(false);
+  const [sellerKeyNameInput, setSellerKeyNameInput] = useState('Discord Bot');
+  const [isGeneratingSellerKey, setIsGeneratingSellerKey] = useState(false);
+  const [generateSellerKeyError, setGenerateSellerKeyError] = useState<string | null>(null);
+  const [newlyGeneratedSellerKey, setNewlyGeneratedSellerKey] = useState<{
+    rawKey: string;
+    name: string;
+    prefix: string;
+  } | null>(null);
+  const [copiedGeneratedSellerKey, setCopiedGeneratedSellerKey] = useState(false);
+  const [sellerKeyToAction, setSellerKeyToAction] = useState<{
+    id: string;
+    name: string;
+    action: 'revoke' | 'regenerate';
+  } | null>(null);
+  const [isProcessingSellerKeyAction, setIsProcessingSellerKeyAction] = useState(false);
+  const [sellerKeyActionError, setSellerKeyActionError] = useState<string | null>(null);
+  const [newlyRegeneratedSellerKey, setNewlyRegeneratedSellerKey] = useState<{
+    rawKey: string;
+    name: string;
+  } | null>(null);
+  const [copiedRegeneratedSellerKey, setCopiedRegeneratedSellerKey] = useState(false);
+
   // Load application details
   async function loadApplication() {
     setIsLoading(true);
@@ -229,6 +261,113 @@ export default function ApplicationDetailPage({
       setError(err.message || 'Error loading application');
     } finally {
       setIsLoading(false);
+    }
+  }
+
+  // Load seller keys scoped to this application
+  async function loadSellerKeys() {
+    setIsLoadingSellerKeys(true);
+    setSellerKeysError(null);
+    setSellerTableMissing(false);
+    try {
+      const res = await fetch(`/api/applications/${id}/seller-keys`);
+      const data = await res.json();
+      if (!res.ok) {
+        if (data.code === 'TABLE_MISSING') {
+          setSellerTableMissing(true);
+        }
+        setSellerKeysError(data.error || 'Unable to load seller keys.');
+        return;
+      }
+      setSellerKeys(data.sellerKeys || []);
+    } catch (err: any) {
+      console.error('Error loading seller keys:', err);
+      setSellerKeysError('Unable to load seller keys.');
+    } finally {
+      setIsLoadingSellerKeys(false);
+    }
+  }
+
+  // Generate a new Seller Key
+  async function handleGenerateSellerKey(e: React.FormEvent) {
+    e.preventDefault();
+    setGenerateSellerKeyError(null);
+    const name = sellerKeyNameInput.trim() || 'Discord Bot';
+
+    setIsGeneratingSellerKey(true);
+    try {
+      const res = await fetch(`/api/applications/${id}/seller-keys`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        if (data.code === 'TABLE_MISSING') {
+          setSellerTableMissing(true);
+        }
+        throw new Error(data.error || 'Failed to generate seller key');
+      }
+
+      setNewlyGeneratedSellerKey({
+        rawKey: data.rawKey,
+        name: data.sellerKey.name,
+        prefix: data.sellerKey.key_prefix
+      });
+      setSellerKeyNameInput('Discord Bot');
+      loadSellerKeys();
+      setToastNotification({
+        type: 'success',
+        text: `Seller Key "${data.sellerKey.name}" created successfully`
+      });
+    } catch (err: any) {
+      setGenerateSellerKeyError(err.message || 'Error generating seller key');
+    } finally {
+      setIsGeneratingSellerKey(false);
+    }
+  }
+
+  // Execute Seller Key Action (Revoke or Regenerate)
+  async function executeSellerKeyAction() {
+    if (!sellerKeyToAction) return;
+    setIsProcessingSellerKeyAction(true);
+    setSellerKeyActionError(null);
+    try {
+      if (sellerKeyToAction.action === 'revoke') {
+        const res = await fetch(
+          `/api/applications/${id}/seller-keys/${sellerKeyToAction.id}?action=revoke`,
+          { method: 'DELETE' }
+        );
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Failed to revoke seller key');
+        setToastNotification({
+          type: 'success',
+          text: data.message || 'Seller key revoked successfully'
+        });
+        setSellerKeyToAction(null);
+        loadSellerKeys();
+      } else if (sellerKeyToAction.action === 'regenerate') {
+        const res = await fetch(
+          `/api/applications/${id}/seller-keys/${sellerKeyToAction.id}/regenerate`,
+          { method: 'POST' }
+        );
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Failed to regenerate seller key');
+        setNewlyRegeneratedSellerKey({
+          rawKey: data.rawKey,
+          name: data.sellerKey.name
+        });
+        setSellerKeyToAction(null);
+        loadSellerKeys();
+        setToastNotification({
+          type: 'success',
+          text: 'Seller key regenerated successfully. Previous key was revoked.'
+        });
+      }
+    } catch (err: any) {
+      setSellerKeyActionError(err.message || 'Action failed');
+    } finally {
+      setIsProcessingSellerKeyAction(false);
     }
   }
 
@@ -260,11 +399,15 @@ export default function ApplicationDetailPage({
 
   useEffect(() => {
     loadApplication();
+    loadSellerKeys();
   }, [id]);
 
   useEffect(() => {
     if (activeTab === 'users') {
       loadUsers();
+    }
+    if (activeTab === 'seller-keys') {
+      loadSellerKeys();
     }
   }, [activeTab]);
 
@@ -645,6 +788,7 @@ export default function ApplicationDetailPage({
     { id: 'credentials', label: 'Credentials', icon: Fingerprint },
     { id: 'users', label: 'Users', icon: Users, count: users.length },
     { id: 'keys', label: 'API Keys', icon: Key, count: app.api_keys?.length || 0 },
+    { id: 'seller-keys', label: 'Seller Keys', icon: Bot, count: sellerKeys.length },
     { id: 'redirects', label: 'Redirect URLs', icon: Link2, count: app.redirect_urls?.length || 0 },
     { id: 'webhooks', label: 'Webhooks', icon: WebhookIcon, count: app.webhooks?.length || 0 },
     { id: 'logs', label: 'Logs', icon: FileText, count: app.application_logs?.length || 0 },
@@ -821,7 +965,7 @@ export default function ApplicationDetailPage({
           </div>
 
           {/* Quick Metrics */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
             <div className="p-4 rounded-2xl bg-[#161616] border border-[#222222]">
               <span className="text-xs text-[#727275] uppercase font-semibold">End Users</span>
               <p className="text-2xl font-bold text-white mt-1">{users.length}</p>
@@ -832,6 +976,18 @@ export default function ApplicationDetailPage({
                 {app.api_keys?.filter((k) => !k.revoked_at).length || 0}
               </p>
             </div>
+            <div
+              onClick={() => setActiveTab('seller-keys')}
+              className="p-4 rounded-2xl bg-[#161616] border border-[#222222] hover:border-[#ff5f15]/50 transition-colors cursor-pointer group"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-[#727275] uppercase font-semibold group-hover:text-white transition-colors">Seller Keys</span>
+                <Bot className="h-3.5 w-3.5 text-[#ff5f15]" />
+              </div>
+              <p className="text-2xl font-bold text-white mt-1">
+                {sellerKeys.filter((sk) => sk.status === 'active' && !sk.revoked_at).length}
+              </p>
+            </div>
             <div className="p-4 rounded-2xl bg-[#161616] border border-[#222222]">
               <span className="text-xs text-[#727275] uppercase font-semibold">Webhooks</span>
               <p className="text-2xl font-bold text-white mt-1">{app.webhooks?.length || 0}</p>
@@ -840,6 +996,26 @@ export default function ApplicationDetailPage({
               <span className="text-xs text-[#727275] uppercase font-semibold">Audit Logs</span>
               <p className="text-2xl font-bold text-white mt-1">{app.application_logs?.length || 0}</p>
             </div>
+          </div>
+
+          {/* Seller Keys Integration Spotlight */}
+          <div className="p-6 rounded-2xl bg-[#161616] border border-[#222222] flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="space-y-1">
+              <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                <Bot className="h-4 w-4 text-[#ff5f15]" />
+                Application Seller Keys
+              </h4>
+              <p className="text-xs text-[#727275]">
+                Generate scoped authentication keys for external bots (e.g. Discord Bot) to generate licenses directly for {app.name}.
+              </p>
+            </div>
+            <button
+              onClick={() => setActiveTab('seller-keys')}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[#202020] hover:bg-[#282828] text-xs font-semibold text-white border border-[#2c2c2c] transition-colors cursor-pointer shrink-0"
+            >
+              <span>Manage Seller Keys</span>
+              <Bot className="h-3.5 w-3.5 text-[#ff5f15]" />
+            </button>
           </div>
 
           {/* Danger Zone: Delete Application */}
@@ -1393,6 +1569,217 @@ NOTIFY pgrst, 'reload schema';`, 'sql_migration')}
                         </td>
                       </tr>
                     ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* TAB: SELLER KEYS */}
+      {activeTab === 'seller-keys' && (
+        <div className="space-y-6">
+          <div className="p-6 rounded-2xl bg-[#161616] border border-[#222222] flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="space-y-1">
+              <h3 className="text-base font-bold text-white flex items-center gap-2">
+                <Bot className="h-5 w-5 text-[#ff5f15]" />
+                Seller Keys
+              </h3>
+              <p className="text-xs text-[#727275]">
+                Seller keys allow external bots (such as Discord bots) to authenticate and generate licenses directly for <span className="text-white font-medium">{app.name}</span>.
+              </p>
+            </div>
+            <button
+              onClick={() => {
+                setGenerateSellerKeyError(null);
+                setSellerKeyNameInput('Discord Bot');
+                setNewlyGeneratedSellerKey(null);
+                setIsGenerateSellerKeyModalOpen(true);
+              }}
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#ff5f15] hover:bg-[#e04f0f] text-white text-xs font-semibold cursor-pointer transition-colors shadow-[0_0_15px_rgba(255,95,21,0.25)] shrink-0"
+            >
+              <Plus className="h-4 w-4" />
+              <span>Generate Seller Key</span>
+            </button>
+          </div>
+
+          {sellerTableMissing && (
+            <div className="p-5 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-300 space-y-3">
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="h-5 w-5 text-amber-400 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <h4 className="font-bold text-sm text-white">Database Migration Required</h4>
+                  <p className="text-xs text-amber-200/90">
+                    The <code className="font-mono bg-black/40 px-1.5 py-0.5 rounded">seller_keys</code> table needs to be created in your Supabase database.
+                  </p>
+                  <p className="text-xs text-amber-300/80">
+                    Please execute the SQL in <code className="font-mono bg-black/40 px-1.5 py-0.5 rounded text-white">supabase/migrations/20260926150000_create_seller_keys.sql</code> in your Supabase SQL Editor.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {newlyRegeneratedSellerKey && (
+            <div className="p-5 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 space-y-3 shadow-xl">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-start gap-3">
+                  <CheckCircle2 className="h-5 w-5 text-emerald-400 shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <h4 className="font-bold text-sm text-white">Seller Key Regenerated Successfully</h4>
+                    <p className="text-xs text-emerald-300/90">
+                      The previous seller key was immediately revoked. Copy the new key now — it will NEVER be displayed again!
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setNewlyRegeneratedSellerKey(null)}
+                  className="text-xs text-[#888888] hover:text-white cursor-pointer px-2.5 py-1 rounded bg-[#202020]"
+                >
+                  Dismiss
+                </button>
+              </div>
+              <div className="flex items-center gap-2 bg-[#111111] p-3 rounded-xl border border-emerald-500/30">
+                <code className="font-mono text-xs text-emerald-400 break-all select-all flex-1">
+                  {newlyRegeneratedSellerKey.rawKey}
+                </code>
+                <button
+                  onClick={() => {
+                    copyToClipboardSafe(newlyRegeneratedSellerKey.rawKey);
+                    setCopiedRegeneratedSellerKey(true);
+                    setTimeout(() => setCopiedRegeneratedSellerKey(false), 2000);
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 text-xs font-semibold cursor-pointer shrink-0 transition-colors"
+                >
+                  {copiedRegeneratedSellerKey ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                  {copiedRegeneratedSellerKey ? 'Copied' : 'Copy Seller Key'}
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div className="rounded-2xl bg-[#161616] border border-[#222222] overflow-hidden">
+            <div className="p-4 border-b border-[#222222] flex items-center justify-between">
+              <h4 className="text-xs font-semibold text-[#888888] uppercase tracking-wider">
+                Seller Keys ({sellerKeys.length})
+              </h4>
+              <span className="text-[11px] text-[#727275]">
+                Only active keys can authenticate to generate licenses
+              </span>
+            </div>
+
+            {isLoadingSellerKeys ? (
+              <div className="py-12 flex flex-col items-center justify-center text-center">
+                <RefreshCw className="h-6 w-6 text-[#ff5f15] animate-spin mb-2" />
+                <p className="text-xs text-[#727275]">Loading seller keys...</p>
+              </div>
+            ) : sellerKeys.length === 0 ? (
+              <div className="py-12 text-center text-xs text-[#727275] space-y-3">
+                <Bot className="h-8 w-8 text-[#444444] mx-auto" />
+                <p>No Seller Keys created yet for this application.</p>
+                <button
+                  onClick={() => {
+                    setGenerateSellerKeyError(null);
+                    setSellerKeyNameInput('Discord Bot');
+                    setNewlyGeneratedSellerKey(null);
+                    setIsGenerateSellerKeyModalOpen(true);
+                  }}
+                  className="px-3 py-1.5 rounded-lg bg-[#202020] hover:bg-[#282828] text-xs font-semibold text-white transition-colors cursor-pointer"
+                >
+                  Generate First Seller Key
+                </button>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-[#111111] text-[#727275] text-xs uppercase border-b border-[#222222]">
+                    <tr>
+                      <th className="py-3 px-4">Name</th>
+                      <th className="py-3 px-4">Key Prefix</th>
+                      <th className="py-3 px-4">Status</th>
+                      <th className="py-3 px-4">Created</th>
+                      <th className="py-3 px-4">Last Used</th>
+                      <th className="py-3 px-4 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#222222]">
+                    {sellerKeys.map((sk) => {
+                      const isRevoked = sk.status === 'revoked' || sk.revoked_at !== null;
+                      return (
+                        <tr key={sk.id} className="hover:bg-[#1a1a1a]/50 transition-colors">
+                          <td className="py-3.5 px-4 font-medium text-white">
+                            <div className="flex items-center gap-2">
+                              <Bot className="h-3.5 w-3.5 text-[#ff5f15]" />
+                              <span>{sk.name}</span>
+                            </div>
+                          </td>
+                          <td className="py-3.5 px-4 font-mono text-xs text-[#aaaaaa]">
+                            {sk.key_prefix}
+                          </td>
+                          <td className="py-3.5 px-4">
+                            <span
+                              className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold ${
+                                !isRevoked
+                                  ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                                  : 'bg-red-500/10 text-red-400 border border-red-500/20'
+                              }`}
+                            >
+                              <span
+                                className={`h-1.5 w-1.5 rounded-full ${
+                                  !isRevoked ? 'bg-emerald-400' : 'bg-red-400'
+                                }`}
+                              />
+                              {isRevoked ? 'Revoked' : 'Active'}
+                            </span>
+                          </td>
+                          <td className="py-3.5 px-4 text-xs text-[#727275]">
+                            {new Date(sk.created_at).toLocaleString()}
+                          </td>
+                          <td className="py-3.5 px-4 text-xs text-[#727275]">
+                            {sk.last_used_at ? new Date(sk.last_used_at).toLocaleString() : 'Never'}
+                          </td>
+                          <td className="py-3.5 px-4 text-right">
+                            <div className="flex items-center justify-end gap-2">
+                              {!isRevoked ? (
+                                <>
+                                  <button
+                                    onClick={() => {
+                                      setSellerKeyActionError(null);
+                                      setSellerKeyToAction({
+                                        id: sk.id,
+                                        name: sk.name,
+                                        action: 'revoke'
+                                      });
+                                    }}
+                                    className="px-2.5 py-1 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 text-xs font-semibold transition-colors cursor-pointer"
+                                    title="Revoke Seller Key"
+                                  >
+                                    Revoke
+                                  </button>
+                                  <button
+                                    onClick={() => {
+                                      setSellerKeyActionError(null);
+                                      setSellerKeyToAction({
+                                        id: sk.id,
+                                        name: sk.name,
+                                        action: 'regenerate'
+                                      });
+                                    }}
+                                    className="px-2.5 py-1 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 text-xs font-semibold transition-colors cursor-pointer"
+                                    title="Regenerate Seller Key"
+                                  >
+                                    Regenerate
+                                  </button>
+                                </>
+                              ) : (
+                                <span className="text-xs text-[#555555] italic">Revoked</span>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -2090,6 +2477,225 @@ NOTIFY pgrst, 'reload schema';`, 'sql_migration')}
                   ? 'Processing...'
                   : keyToAction.action === 'delete'
                   ? 'Delete Key'
+                  : 'Revoke Key'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* GENERATE SELLER KEY MODAL */}
+      {isGenerateSellerKeyModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
+          <div className="w-full max-w-lg rounded-2xl bg-[#161616] border border-[#2a2a2a] p-6 shadow-2xl space-y-5">
+            {newlyGeneratedSellerKey ? (
+              <div className="space-y-4">
+                <div className="flex items-center gap-3">
+                  <div className="h-10 w-10 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
+                    <CheckCircle2 className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-white text-base">
+                      Seller Key created successfully.
+                    </h3>
+                    <p className="text-xs text-emerald-400/90 font-medium">
+                      One-time Secret Display
+                    </p>
+                  </div>
+                </div>
+
+                <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-300/90 text-xs space-y-1">
+                  <p className="font-semibold text-white">Save your Seller Key now</p>
+                  <p>
+                    The complete Seller Key must not appear again in the normal dashboard table. After closing this modal, only the prefix will be visible.
+                  </p>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-semibold text-[#888888] uppercase tracking-wider block">
+                    Full Seller Key
+                  </label>
+                  <div className="flex items-center gap-2 bg-[#111111] p-3 rounded-xl border border-emerald-500/30">
+                    <code className="font-mono text-xs text-emerald-400 select-all flex-1 break-all">
+                      {newlyGeneratedSellerKey.rawKey}
+                    </code>
+                    <button
+                      onClick={() => {
+                        copyToClipboardSafe(newlyGeneratedSellerKey.rawKey);
+                        setCopiedGeneratedSellerKey(true);
+                        setTimeout(() => setCopiedGeneratedSellerKey(false), 2000);
+                      }}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 text-xs font-semibold cursor-pointer shrink-0 transition-colors"
+                    >
+                      {copiedGeneratedSellerKey ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                      {copiedGeneratedSellerKey ? 'Copied' : 'Copy Seller Key'}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex justify-end pt-3 border-t border-[#222222]">
+                  <button
+                    onClick={() => {
+                      setNewlyGeneratedSellerKey(null);
+                      setIsGenerateSellerKeyModalOpen(false);
+                    }}
+                    className="px-5 py-2.5 rounded-xl bg-[#202020] hover:bg-[#282828] text-white text-xs font-semibold cursor-pointer transition-colors"
+                  >
+                    Done (Close Modal)
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <form onSubmit={handleGenerateSellerKey} className="space-y-4">
+                <div className="flex items-center gap-3">
+                  <div className="h-10 w-10 rounded-xl bg-[#ff5f15]/10 border border-[#ff5f15]/20 flex items-center justify-center text-[#ff5f15]">
+                    <Bot className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-white text-base">Generate Seller Key</h3>
+                    <p className="text-xs text-[#727275]">
+                      Create a key for bot license generation
+                    </p>
+                  </div>
+                </div>
+
+                {generateSellerKeyError && (
+                  <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-xs flex items-center gap-2">
+                    <AlertCircle className="h-4 w-4 shrink-0" />
+                    <span>{generateSellerKeyError}</span>
+                  </div>
+                )}
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-[#aaaaaa] flex items-center justify-between">
+                    <span>Name *</span>
+                    <span className="text-[11px] text-[#666666]">Identifier for your bot</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={sellerKeyNameInput}
+                    onChange={(e) => setSellerKeyNameInput(e.target.value)}
+                    placeholder="Discord Bot"
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-[#111111] border border-[#262626] text-xs text-white placeholder-[#555555] focus:outline-none focus:border-[#ff5f15]/50 transition-colors"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-[#aaaaaa]">
+                    Application
+                  </label>
+                  <div className="p-3 rounded-xl bg-[#111111] border border-[#222222] text-xs text-[#888888] flex items-center justify-between">
+                    <span className="font-medium text-white">{app.name}</span>
+                    <span className="font-mono text-[11px] text-[#666666]">Current Application</span>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#222222]">
+                  <button
+                    type="button"
+                    onClick={() => setIsGenerateSellerKeyModalOpen(false)}
+                    className="px-4 py-2.5 rounded-xl bg-[#1f1f1f] hover:bg-[#282828] text-xs font-semibold text-[#888888] hover:text-white transition-colors cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isGeneratingSellerKey}
+                    className="px-5 py-2.5 rounded-xl bg-[#ff5f15] hover:bg-[#e04f0f] text-xs font-semibold text-white transition-all shadow-[0_0_15px_rgba(255,95,21,0.25)] cursor-pointer disabled:opacity-50 inline-flex items-center gap-2"
+                  >
+                    {isGeneratingSellerKey ? (
+                      <>
+                        <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                        Generating...
+                      </>
+                    ) : (
+                      'Generate'
+                    )}
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* SELLER KEY ACTION MODAL (REVOKE OR REGENERATE) */}
+      {sellerKeyToAction && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
+          <div className="w-full max-w-md rounded-2xl bg-[#161616] border border-[#2a2a2a] p-6 shadow-2xl space-y-5">
+            <div className="flex items-center gap-3">
+              <div
+                className={`h-10 w-10 rounded-xl flex items-center justify-center ${
+                  sellerKeyToAction.action === 'regenerate'
+                    ? 'bg-blue-500/10 border border-blue-500/20 text-blue-400'
+                    : 'bg-amber-500/10 border border-amber-500/20 text-amber-400'
+                }`}
+              >
+                {sellerKeyToAction.action === 'regenerate' ? (
+                  <RefreshCw className="h-5 w-5" />
+                ) : (
+                  <Ban className="h-5 w-5" />
+                )}
+              </div>
+              <div>
+                <h3 className="font-bold text-white text-base">
+                  {sellerKeyToAction.action === 'regenerate'
+                    ? 'Regenerate Seller Key?'
+                    : 'Revoke Seller Key?'}
+                </h3>
+                <p className="text-xs text-[#727275]">
+                  {sellerKeyToAction.action === 'regenerate'
+                    ? 'Generates a new key and invalidates previous'
+                    : 'Immediately invalidates access'}
+                </p>
+              </div>
+            </div>
+
+            <p className="text-sm text-[#aaaaaa]">
+              {sellerKeyToAction.action === 'regenerate' ? (
+                <>
+                  Regenerating will immediately invalidate the current Seller Key for{' '}
+                  <strong className="text-white">{sellerKeyToAction.name}</strong> and create a new key.
+                  Any Discord bot using the previous key will immediately stop working until updated.
+                </>
+              ) : (
+                <>
+                  Are you sure you want to revoke{' '}
+                  <strong className="text-white">{sellerKeyToAction.name}</strong>?
+                  Any Discord bot or client using this Seller Key will immediately receive HTTP 401 Unauthorized.
+                </>
+              )}
+            </p>
+
+            {sellerKeyActionError && (
+              <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-xs">
+                {sellerKeyActionError}
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#222222]">
+              <button
+                type="button"
+                onClick={() => setSellerKeyToAction(null)}
+                className="px-4 py-2.5 rounded-xl bg-[#1f1f1f] hover:bg-[#282828] text-xs font-semibold text-[#888888] hover:text-white transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={executeSellerKeyAction}
+                disabled={isProcessingSellerKeyAction}
+                className={`px-4 py-2.5 rounded-xl text-xs font-semibold text-white transition-all cursor-pointer disabled:opacity-50 ${
+                  sellerKeyToAction.action === 'regenerate'
+                    ? 'bg-blue-600 hover:bg-blue-700 shadow-[0_0_15px_rgba(37,99,235,0.2)]'
+                    : 'bg-amber-600 hover:bg-amber-700 shadow-[0_0_15px_rgba(217,119,6,0.2)]'
+                }`}
+              >
+                {isProcessingSellerKeyAction
+                  ? 'Processing...'
+                  : sellerKeyToAction.action === 'regenerate'
+                  ? 'Regenerate Key'
                   : 'Revoke Key'}
               </button>
             </div>

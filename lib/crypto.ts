@@ -44,6 +44,17 @@ export function generateApiKey(): { fullKey: string; prefix: string } {
 }
 
 /**
+ * Generate cryptographically secure Seller Key
+ * Format: jh10c_seller_<48 hex chars>
+ */
+export function generateSellerKey(): { fullKey: string; prefix: string } {
+  const randomHex = crypto.randomBytes(24).toString('hex');
+  const fullKey = `jh10c_seller_${randomHex}`;
+  const prefix = `jh10c_seller_${randomHex.slice(0, 6)}...`;
+  return { fullKey, prefix };
+}
+
+/**
  * Generate cryptographically secure Webhook Secret
  * Format: whsec_<40 hex chars>
  */

@@ -6,6 +6,7 @@ import {
   calculateExpiryDate,
   MAX_GENERATION_AMOUNT
 } from '@/lib/license-generator';
+import { generateLicensesService } from '@/lib/license-service';
 import { isValidSubscription } from '@/lib/subscriptions';
 import type { License, LicenseStatus } from '@/lib/supabase/types';
 
@@ -179,12 +180,8 @@ export async function POST(request: Request) {
       numbers = Boolean(rawCharSets.numbers || rawCharSets['0-9']);
     }
 
-    // 1. Validation
     if (!applicationId) {
-      return NextResponse.json(
-        { error: 'Application ID is required' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'Application ID is required' }, { status: 400 });
     }
 
     const admin = createAdminClient();
@@ -197,10 +194,7 @@ export async function POST(request: Request) {
       .maybeSingle();
 
     if (appErr || !appRecord) {
-      return NextResponse.json(
-        { error: 'Target application not found' },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: 'Target application not found' }, { status: 404 });
     }
 
     if (appRecord.owner_id !== auth.profile.id) {
@@ -210,156 +204,28 @@ export async function POST(request: Request) {
       );
     }
 
-    // Verify subscription
-    if (!subscription) {
-      return NextResponse.json(
-        { error: 'Subscription is required' },
-        { status: 400 }
-      );
-    }
-
-    // Amount validation
-    if (isNaN(amount) || amount < 1) {
-      return NextResponse.json(
-        { error: 'Amount must be a positive number' },
-        { status: 400 }
-      );
-    }
-
-    if (amount > MAX_GENERATION_AMOUNT) {
-      return NextResponse.json(
-        { error: `Amount cannot exceed ${MAX_GENERATION_AMOUNT} licenses per generation batch` },
-        { status: 400 }
-      );
-    }
-
-    // Mask validation
-    if (!mask) {
-      return NextResponse.json(
-        { error: 'License Mask is required (e.g. JH10C-XXXX-XXXX)' },
-        { status: 400 }
-      );
-    }
-
-    if (!/X/i.test(mask)) {
-      return NextResponse.json(
-        { error: 'License Mask must contain at least one "X" character placeholder' },
-        { status: 400 }
-      );
-    }
-
-    // Subscription length validation
-    if (isNaN(lengthVal) || lengthVal <= 0) {
-      return NextResponse.json(
-        { error: 'Subscription length must be a positive number' },
-        { status: 400 }
-      );
-    }
-
-    const validUnits = ['hours', 'days', 'months', 'years'];
-    if (!validUnits.includes(lengthUnit)) {
-      return NextResponse.json(
-        { error: 'Subscription length unit must be Days, Hours, Months, or Years' },
-        { status: 400 }
-      );
-    }
-
-    // Character set validation
-    if (!lowercase && !uppercase && !numbers) {
-      return NextResponse.json(
-        { error: 'At least one character set (az Lowercase, AZ Uppercase, or 0-9 Numbers) must be selected' },
-        { status: 400 }
-      );
-    }
-
-    // Allowed devices validation
-    if (isNaN(allowedDevices) || allowedDevices < 1 || allowedDevices > 1000) {
-      return NextResponse.json(
-        { error: 'Allowed devices must be a number between 1 and 1000' },
-        { status: 400 }
-      );
-    }
-
-    // 2. Expiry calculation
-    const expiresAt = calculateExpiryDate(lengthVal, lengthUnit as any);
-
-    // 3. Query existing license keys for collision prevention
-    const { data: existingRows, error: lookupErr } = await admin
-      .from('licenses')
-      .select('license_key');
-
-    if (lookupErr) {
-      if (
-        lookupErr.code === 'PGRST205' ||
-        lookupErr.message?.includes('schema cache') ||
-        lookupErr.message?.includes('does not exist')
-      ) {
-        return NextResponse.json(
-          {
-            error:
-              'Table "licenses" does not exist in Supabase. Please execute the migration in supabase/migrations/20260926140000_create_licenses.sql in your Supabase SQL Editor.',
-            code: 'TABLE_MISSING',
-            migrationFile: 'supabase/migrations/20260926140000_create_licenses.sql'
-          },
-          { status: 503 }
-        );
-      }
-      return NextResponse.json(
-        { error: `Database error checking existing licenses: ${lookupErr.message}` },
-        { status: 500 }
-      );
-    }
-
-    const existingKeySet = new Set((existingRows || []).map((r) => r.license_key));
-
-    // 4. Generate unique keys
-    const generatedKeys = generateUniqueLicenses({
+    // Call shared license generation service
+    const generationResult = await generateLicensesService({
+      applicationId,
+      subscription,
       mask,
       amount,
+      subscriptionLength: lengthVal,
+      subscriptionUnit: lengthUnit as any,
       charSets: { lowercase, uppercase, numbers },
-      existingKeys: existingKeySet
+      note,
+      allowedDevices
     });
 
-    const nowIso = new Date().toISOString();
-
-    // 5. Build insert records
-    const insertPayload = generatedKeys.map((key) => ({
-      application_id: applicationId,
-      license_key: key,
-      subscription: subscription,
-      status: 'active' as LicenseStatus,
-      allowed_devices: allowedDevices,
-      used_devices: 0,
-      device_hwids: [],
-      note: note || null,
-      expires_at: expiresAt,
-      created_at: nowIso,
-      updated_at: nowIso
-    }));
-
-    // 6. Insert batch into database
-    const { data: insertedRecords, error: insertErr } = await admin
-      .from('licenses')
-      .insert(insertPayload)
-      .select();
-
-    if (insertErr || !insertedRecords) {
-      console.error('[API Licenses POST] Database insertion error:', insertErr);
-      return NextResponse.json(
-        { error: insertErr?.message || 'Failed to save generated licenses' },
-        { status: 500 }
-      );
-    }
-
-    // 7. Log audit event (without exposing complete license keys in logs)
+    // Log audit event
     await logApplicationEvent({
-      applicationId: applicationId,
+      applicationId,
       event: 'licenses.generated',
       metadata: {
-        count: generatedKeys.length,
+        count: generationResult.count,
         subscription,
         mask,
-        expiresAt,
+        expiresAt: generationResult.expiresAt,
         allowedDevices,
         hasNote: Boolean(note)
       }
@@ -369,9 +235,9 @@ export async function POST(request: Request) {
       {
         success: true,
         message: 'Licenses Generated Successfully',
-        count: generatedKeys.length,
-        generatedKeys,
-        licenses: (insertedRecords as License[]).map((lic) => ({
+        count: generationResult.count,
+        generatedKeys: generationResult.generatedKeys,
+        licenses: generationResult.licenses.map((lic) => ({
           ...lic,
           application: { id: appRecord.id, name: appRecord.name }
         }))
@@ -380,9 +246,13 @@ export async function POST(request: Request) {
     );
   } catch (err: any) {
     console.error('[API Licenses POST] Error:', err);
+    const status = err.statusCode || 500;
     return NextResponse.json(
-      { error: err.message || 'Internal server error during license generation' },
-      { status: 500 }
+      {
+        error: err.message || 'Internal server error during license generation',
+        ...(err.code ? { code: err.code } : {})
+      },
+      { status }
     );
   }
 }

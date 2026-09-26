@@ -39,6 +39,20 @@ export type ApiKey = {
   revoked_at: string | null;
 };
 
+export type SellerKeyStatus = 'active' | 'revoked';
+
+export type SellerKey = {
+  id: string;
+  application_id: string;
+  name: string;
+  key_prefix: string;
+  key_hash: string;
+  status: SellerKeyStatus;
+  last_used_at: string | null;
+  created_at: string;
+  revoked_at: string | null;
+};
+
 export type RedirectUrl = {
   id: string;
   application_id: string;
@@ -311,6 +325,32 @@ export interface Database {
           expires_at?: string | null;
           created_at?: string;
           updated_at?: string;
+          revoked_at?: string | null;
+        };
+        Relationships: [];
+      };
+      seller_keys: {
+        Row: SellerKey;
+        Insert: {
+          id?: string;
+          application_id: string;
+          name: string;
+          key_prefix: string;
+          key_hash: string;
+          status?: SellerKeyStatus;
+          last_used_at?: string | null;
+          created_at?: string;
+          revoked_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          application_id?: string;
+          name?: string;
+          key_prefix?: string;
+          key_hash?: string;
+          status?: SellerKeyStatus;
+          last_used_at?: string | null;
+          created_at?: string;
           revoked_at?: string | null;
         };
         Relationships: [];

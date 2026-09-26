@@ -114,6 +114,19 @@ CREATE TABLE IF NOT EXISTS public.licenses (
   revoked_at TIMESTAMPTZ
 );
 
+-- 9. SELLER KEYS
+CREATE TABLE IF NOT EXISTS public.seller_keys (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  application_id UUID NOT NULL REFERENCES public.applications(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  key_hash TEXT NOT NULL UNIQUE,
+  key_prefix TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'revoked')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_used_at TIMESTAMPTZ,
+  revoked_at TIMESTAMPTZ
+);
+
 -- Safe migration & alias view: ensure public.users compatibility
 DO $$
 BEGIN
@@ -212,6 +225,11 @@ CREATE INDEX IF NOT EXISTS idx_licenses_license_key ON public.licenses(license_k
 CREATE INDEX IF NOT EXISTS idx_licenses_status ON public.licenses(status);
 CREATE INDEX IF NOT EXISTS idx_licenses_subscription ON public.licenses(subscription);
 CREATE INDEX IF NOT EXISTS idx_licenses_created_at ON public.licenses(created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_seller_keys_application_id ON public.seller_keys(application_id);
+CREATE INDEX IF NOT EXISTS idx_seller_keys_key_hash ON public.seller_keys(key_hash);
+CREATE INDEX IF NOT EXISTS idx_seller_keys_status ON public.seller_keys(status);
+CREATE INDEX IF NOT EXISTS idx_seller_keys_created_at ON public.seller_keys(created_at DESC);
 
 -- ==============================================================================
 -- 3. FUNCTIONS & TRIGGERS
@@ -316,6 +334,7 @@ ALTER TABLE public.api_keys ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.redirect_urls ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.webhooks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.application_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.seller_keys ENABLE ROW LEVEL SECURITY;
 
 -- Profiles: Authenticated owner can view and update their own profile
 DROP POLICY IF EXISTS "Owner can view own profile" ON public.profiles;
@@ -440,6 +459,33 @@ CREATE POLICY "Owner can manage licenses" ON public.licenses
     public.is_owner() AND EXISTS (
       SELECT 1 FROM public.applications
       WHERE id = licenses.application_id AND owner_id = auth.uid()
+    )
+  );
+
+-- Seller Keys: Accessible if associated application belongs to the owner
+DROP POLICY IF EXISTS "Owner can manage seller_keys" ON public.seller_keys;
+CREATE POLICY "Owner can manage seller_keys" ON public.seller_keys
+  FOR ALL TO authenticated
+  USING (
+    public.is_owner() AND EXISTS (
+      SELECT 1 FROM public.applications
+      WHERE id = seller_keys.application_id AND owner_id = auth.uid()
+    )
+  )
+  WITH CHECK (
+    public.is_owner() AND EXISTS (
+      SELECT 1 FROM public.applications
+      WHERE id = seller_keys.application_id AND owner_id = auth.uid()
+    )
+  );
+
+DROP POLICY IF EXISTS "Owner can delete seller_keys" ON public.seller_keys;
+CREATE POLICY "Owner can delete seller_keys" ON public.seller_keys
+  FOR DELETE TO authenticated
+  USING (
+    public.is_owner() AND EXISTS (
+      SELECT 1 FROM public.applications
+      WHERE id = seller_keys.application_id AND owner_id = auth.uid()
     )
   );
 
