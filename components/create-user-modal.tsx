@@ -128,6 +128,11 @@ export default function CreateUserModal({
       return;
     }
 
+    if (!password || password.length < 1 || password.length > 100) {
+      setErrorMessage('Password must be between 1 and 100 characters');
+      return;
+    }
+
     // Auto-generate fallback email if left blank so database constraint is satisfied
     const safeEmail =
       email.trim() || `${username.trim().toLowerCase().replace(/[^a-z0-9]/g, '')}@app.local`;
@@ -143,7 +148,7 @@ export default function CreateUserModal({
           applicationId: targetAppId,
           username: username.trim(),
           email: safeEmail,
-          password: password.trim() || undefined,
+          password: password,
           subscription,
           expiry,
           hwid_locked: hwidLocked,
@@ -310,6 +315,7 @@ export default function CreateUserModal({
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="Password"
+                  maxLength={100}
                   className="w-full px-3 py-2 pr-9 rounded-xl bg-[#111111] border border-[#282828] text-xs text-white placeholder-[#555555] focus:outline-none focus:border-[#ff5f15]/50 transition-colors"
                 />
                 <button

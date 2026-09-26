@@ -295,8 +295,8 @@ export default function ApplicationDetailPage({
       setCreateUserError('Enter a valid email address');
       return;
     }
-    if (!userPassword || userPassword.length < 6) {
-      setCreateUserError('Password must be at least 6 characters');
+    if (!userPassword || userPassword.length < 1 || userPassword.length > 100) {
+      setCreateUserError('Password must be between 1 and 100 characters');
       return;
     }
 
@@ -357,8 +357,8 @@ export default function ApplicationDetailPage({
   async function handleResetPassword(e: React.FormEvent) {
     e.preventDefault();
     if (!selectedUser) return;
-    if (!newPassword || newPassword.length < 6) {
-      setResetPasswordError('Password must be at least 6 characters');
+    if (!newPassword || newPassword.length < 1 || newPassword.length > 100) {
+      setResetPasswordError('Password must be between 1 and 100 characters');
       return;
     }
 
@@ -1874,9 +1874,10 @@ NOTIFY pgrst, 'reload schema';`, 'sql_migration')}
                       type={showNewPassword ? 'text' : 'password'}
                       value={newPassword}
                       onChange={(e) => setNewPassword(e.target.value)}
-                      placeholder="Minimum 6 characters"
+                      placeholder="Password"
                       required
-                      minLength={6}
+                      minLength={1}
+                      maxLength={100}
                       className="w-full px-3.5 py-2.5 pr-10 rounded-xl bg-[#111111] border border-[#282828] text-sm text-white placeholder-[#444444] focus:outline-none focus:border-[#ff5f15]/50 transition-colors"
                     />
                     <button

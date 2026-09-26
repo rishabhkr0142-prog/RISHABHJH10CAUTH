@@ -139,8 +139,8 @@ export default function UsersPage() {
       setCreateError('Please enter a valid email address');
       return;
     }
-    if (!createPassword || createPassword.length < 6) {
-      setCreateError('Password must be at least 6 characters');
+    if (!createPassword || createPassword.length < 1 || createPassword.length > 100) {
+      setCreateError('Password must be between 1 and 100 characters');
       return;
     }
 
@@ -205,8 +205,8 @@ export default function UsersPage() {
   async function handleResetPassword(e: React.FormEvent) {
     e.preventDefault();
     if (!activeUser) return;
-    if (!resetPassword || resetPassword.length < 6) {
-      setResetError('Password must be at least 6 characters');
+    if (!resetPassword || resetPassword.length < 1 || resetPassword.length > 100) {
+      setResetError('Password must be between 1 and 100 characters');
       return;
     }
 
@@ -828,9 +828,10 @@ NOTIFY pgrst, 'reload schema';`);
                       type={showResetPassword ? 'text' : 'password'}
                       value={resetPassword}
                       onChange={(e) => setResetPassword(e.target.value)}
-                      placeholder="Minimum 6 characters"
+                      placeholder="Password"
                       required
-                      minLength={6}
+                      minLength={1}
+                      maxLength={100}
                       className="w-full px-3.5 py-2.5 pr-10 rounded-xl bg-[#111111] border border-[#282828] text-sm text-white placeholder-[#444444] focus:outline-none focus:border-[#ff5f15]/50 transition-colors"
                     />
                     <button

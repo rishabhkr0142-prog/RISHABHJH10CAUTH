@@ -103,9 +103,11 @@ export async function POST(
       email = `${cleanUser || 'user'}@app.local`;
     }
 
-    if (!password || typeof password !== 'string' || password.length < 6) {
-      const crypto = await import('crypto');
-      password = crypto.randomBytes(8).toString('hex') + '!A1';
+    if (!password || typeof password !== 'string' || password.length < 1 || password.length > 100) {
+      return NextResponse.json(
+        { error: 'Password must be between 1 and 100 characters' },
+        { status: 400 }
+      );
     }
 
     const supabase = await createClient();

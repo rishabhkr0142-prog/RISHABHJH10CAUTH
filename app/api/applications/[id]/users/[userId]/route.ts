@@ -124,10 +124,10 @@ export async function PATCH(
     }
 
     let passwordReset = false;
-    if (password && typeof password === 'string') {
-      if (password.length < 6) {
+    if (password !== undefined) {
+      if (!password || typeof password !== 'string' || password.length < 1 || password.length > 100) {
         return NextResponse.json(
-          { error: 'Password must be at least 6 characters long' },
+          { error: 'Password must be between 1 and 100 characters' },
           { status: 400 }
         );
       }

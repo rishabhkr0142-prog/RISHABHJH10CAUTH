@@ -119,13 +119,9 @@ export async function POST(request: Request) {
       email = `${cleanUser || 'user'}@app.local`;
     }
 
-    // If password is not provided, generate a secure random 12-char password
-    if (!password || typeof password !== 'string' || password.trim().length === 0) {
-      const crypto = await import('crypto');
-      password = crypto.randomBytes(8).toString('hex') + '!A1';
-    } else if (password.length < 6) {
+    if (!password || typeof password !== 'string' || password.length < 1 || password.length > 100) {
       return NextResponse.json(
-        { error: 'Password must be at least 6 characters long' },
+        { error: 'Password must be between 1 and 100 characters' },
         { status: 400 }
       );
     }
