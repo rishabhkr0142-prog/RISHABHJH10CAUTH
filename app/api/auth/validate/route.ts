@@ -125,21 +125,48 @@ export async function POST(request: Request) {
 
       // End-User Authentication action
       if (action === 'authenticate_user') {
-        if (!email || !password) {
+        const identifier = String(email || body.username || '').trim();
+        if (!identifier || !password) {
           return NextResponse.json(
-            { valid: false, error: 'Email and password are required for user authentication' },
+            { valid: false, error: 'Email/username and password are required for user authentication' },
             { status: 400 }
           );
         }
 
-        const { data: userRecord, error: userErr } = await admin
-          .from('application_users')
-          .select('*')
-          .eq('application_id', app.id)
-          .eq('email', String(email).trim().toLowerCase())
-          .single();
+        let userRecord: EndUser | null = null;
+        const cleanIdentifier = identifier.toLowerCase();
 
-        if (userErr || !userRecord) {
+        if (cleanIdentifier.includes('@')) {
+          const { data } = await admin
+            .from('application_users')
+            .select('*')
+            .eq('application_id', app.id)
+            .eq('email', cleanIdentifier)
+            .maybeSingle();
+          userRecord = data as EndUser | null;
+        } else {
+          // Check username first, then fallback to email (e.g. username@app.local)
+          const { data: byUsername } = await admin
+            .from('application_users')
+            .select('*')
+            .eq('application_id', app.id)
+            .eq('username', identifier)
+            .maybeSingle();
+
+          if (byUsername) {
+            userRecord = byUsername as EndUser;
+          } else {
+            const { data: byEmail } = await admin
+              .from('application_users')
+              .select('*')
+              .eq('application_id', app.id)
+              .or(`email.eq.${cleanIdentifier},email.eq.${cleanIdentifier}@app.local`)
+              .maybeSingle();
+            userRecord = byEmail as EndUser | null;
+          }
+        }
+
+        if (!userRecord) {
           return NextResponse.json(
             { valid: false, error: 'Invalid email or password' },
             { status: 401 }

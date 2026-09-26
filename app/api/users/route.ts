@@ -120,9 +120,14 @@ export async function POST(request: Request) {
     }
 
     // If password is not provided, generate a secure random 12-char password
-    if (!password || typeof password !== 'string' || password.length < 6) {
+    if (!password || typeof password !== 'string' || password.trim().length === 0) {
       const crypto = await import('crypto');
       password = crypto.randomBytes(8).toString('hex') + '!A1';
+    } else if (password.length < 6) {
+      return NextResponse.json(
+        { error: 'Password must be at least 6 characters long' },
+        { status: 400 }
+      );
     }
 
     const supabase = await createClient();
