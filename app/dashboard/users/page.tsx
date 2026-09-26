@@ -1,16 +1,19 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { copyToClipboardSafe } from '@/lib/clipboard';
 import CreateUserModal from '@/components/create-user-modal';
+import UserDetailsModal from '@/components/user-details-modal';
+import type { EnrichedUser } from '@/lib/user-service';
+import { AVAILABLE_SUBSCRIPTIONS } from '@/lib/subscriptions';
 import {
   Users,
   Search,
   Plus,
   Filter,
   RefreshCw,
-  Key,
+  KeyRound,
   Shield,
   Layers,
   Trash2,
@@ -20,13 +23,17 @@ import {
   Check,
   AlertCircle,
   Clock,
-  MoreVertical,
   CheckCircle2,
   XCircle,
   AlertTriangle,
-  UserCheck,
-  ExternalLink,
-  ChevronRight
+  ChevronLeft,
+  ChevronRight,
+  Copy,
+  Laptop,
+  Activity,
+  Calendar,
+  Sparkles,
+  RotateCcw
 } from 'lucide-react';
 
 interface Application {
@@ -35,20 +42,8 @@ interface Application {
   client_id: string;
 }
 
-interface UserRecord {
-  id: string;
-  application_id: string;
-  username: string | null;
-  email: string;
-  status: 'active' | 'disabled' | 'suspended';
-  created_at: string;
-  updated_at: string;
-  last_login_at: string | null;
-  application?: Application | null;
-}
-
 export default function UsersPage() {
-  const [users, setUsers] = useState<UserRecord[]>([]);
+  const [users, setUsers] = useState<EnrichedUser[]>([]);
   const [applications, setApplications] = useState<Application[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -57,23 +52,22 @@ export default function UsersPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedAppId, setSelectedAppId] = useState('all');
   const [selectedStatus, setSelectedStatus] = useState('all');
+  const [selectedLicenseStatus, setSelectedLicenseStatus] = useState('all');
+  const [selectedSubscription, setSelectedSubscription] = useState('all');
+  const [selectedExpiry, setSelectedExpiry] = useState('all');
+
+  // Pagination
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalCount, setTotalCount] = useState(0);
 
   // Modals
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isViewModalOpen, setIsViewModalOpen] = useState(false);
   const [isResetPasswordModalOpen, setIsResetPasswordModalOpen] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
-  const [activeUser, setActiveUser] = useState<UserRecord | null>(null);
-
-  // Create form state
-  const [createAppId, setCreateAppId] = useState('');
-  const [createEmail, setCreateEmail] = useState('');
-  const [createUsername, setCreateUsername] = useState('');
-  const [createPassword, setCreatePassword] = useState('');
-  const [createStatus, setCreateStatus] = useState<'active' | 'disabled'>('active');
-  const [showCreatePassword, setShowCreatePassword] = useState(false);
-  const [isCreating, setIsCreating] = useState(false);
-  const [createError, setCreateError] = useState<string | null>(null);
+  const [activeUser, setActiveUser] = useState<EnrichedUser | null>(null);
 
   // Reset password form state
   const [resetPassword, setResetPassword] = useState('');
@@ -90,14 +84,22 @@ export default function UsersPage() {
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [tableMissing, setTableMissing] = useState(false);
 
-  async function fetchUsers() {
+  // Copy feedback
+  const [copiedKeyId, setCopiedKeyId] = useState<string | null>(null);
+
+  async function fetchUsers(page: number = currentPage) {
     setIsLoading(true);
     setError(null);
     setTableMissing(false);
     try {
       const params = new URLSearchParams();
+      params.set('page', String(page));
+      params.set('limit', String(pageSize));
       if (selectedAppId !== 'all') params.set('application_id', selectedAppId);
       if (selectedStatus !== 'all') params.set('status', selectedStatus);
+      if (selectedLicenseStatus !== 'all') params.set('license_status', selectedLicenseStatus);
+      if (selectedSubscription !== 'all') params.set('subscription', selectedSubscription);
+      if (selectedExpiry !== 'all') params.set('expiry', selectedExpiry);
       if (searchQuery.trim()) params.set('search', searchQuery.trim());
 
       const res = await fetch(`/api/users?${params.toString()}`);
@@ -109,10 +111,10 @@ export default function UsersPage() {
         throw new Error(data.error || 'Unable to load application users. Please try again.');
       }
       setUsers(data.users || []);
+      setTotalCount(data.total || 0);
+      setTotalPages(data.totalPages || 1);
+      setCurrentPage(data.page || 1);
       setApplications(data.applications || []);
-      if (data.applications?.length > 0 && !createAppId) {
-        setCreateAppId(data.applications[0].id);
-      }
     } catch (err: any) {
       setError(err.message || 'Error fetching users');
     } finally {
@@ -120,64 +122,39 @@ export default function UsersPage() {
     }
   }
 
+  // Reload when filters change
   useEffect(() => {
-    fetchUsers();
-  }, [selectedAppId, selectedStatus]);
+    setCurrentPage(1);
+    fetchUsers(1);
+  }, [selectedAppId, selectedStatus, selectedLicenseStatus, selectedSubscription, selectedExpiry, pageSize]);
 
   async function handleSearch(e: React.FormEvent) {
     e.preventDefault();
-    fetchUsers();
+    setCurrentPage(1);
+    fetchUsers(1);
   }
 
-  async function handleCreateUser(e: React.FormEvent) {
-    e.preventDefault();
-    if (!createAppId) {
-      setCreateError('Please select an application');
-      return;
-    }
-    if (!createEmail || !createEmail.includes('@')) {
-      setCreateError('Please enter a valid email address');
-      return;
-    }
-    if (!createPassword || createPassword.length < 1 || createPassword.length > 100) {
-      setCreateError('Password must be between 1 and 100 characters');
-      return;
-    }
-
-    setIsCreating(true);
-    setCreateError(null);
-
-    try {
-      const res = await fetch('/api/users', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          application_id: createAppId,
-          email: createEmail,
-          username: createUsername || undefined,
-          password: createPassword,
-          status: createStatus
-        })
-      });
-
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Failed to create user');
-      }
-
-      setIsCreateModalOpen(false);
-      setCreateEmail('');
-      setCreateUsername('');
-      setCreatePassword('');
-      fetchUsers();
-    } catch (err: any) {
-      setCreateError(err.message || 'Failed to create user');
-    } finally {
-      setIsCreating(false);
-    }
+  function handleResetFilters() {
+    setSearchQuery('');
+    setSelectedAppId('all');
+    setSelectedStatus('all');
+    setSelectedLicenseStatus('all');
+    setSelectedSubscription('all');
+    setSelectedExpiry('all');
   }
 
-  async function handleToggleStatus(user: UserRecord) {
+  const isFiltered = useMemo(() => {
+    return (
+      searchQuery.trim() !== '' ||
+      selectedAppId !== 'all' ||
+      selectedStatus !== 'all' ||
+      selectedLicenseStatus !== 'all' ||
+      selectedSubscription !== 'all' ||
+      selectedExpiry !== 'all'
+    );
+  }, [searchQuery, selectedAppId, selectedStatus, selectedLicenseStatus, selectedSubscription, selectedExpiry]);
+
+  async function handleToggleStatus(user: EnrichedUser) {
     setTogglingUserId(user.id);
     const newStatus = user.status === 'active' ? 'disabled' : 'active';
     try {
@@ -195,6 +172,10 @@ export default function UsersPage() {
       setUsers((prev) =>
         prev.map((u) => (u.id === user.id ? { ...u, status: newStatus } : u))
       );
+
+      if (activeUser && activeUser.id === user.id) {
+        setActiveUser({ ...activeUser, status: newStatus });
+      }
     } catch (err: any) {
       alert(err.message || 'Error updating status');
     } finally {
@@ -259,8 +240,10 @@ export default function UsersPage() {
       }
 
       setUsers((prev) => prev.filter((u) => u.id !== activeUser.id));
+      setTotalCount((prev) => Math.max(0, prev - 1));
       setIsDeleteModalOpen(false);
       setActiveUser(null);
+      if (isViewModalOpen) setIsViewModalOpen(false);
     } catch (err: any) {
       setDeleteError(err.message || 'Error deleting user');
     } finally {
@@ -268,34 +251,54 @@ export default function UsersPage() {
     }
   }
 
-  const activeCount = users.filter((u) => u.status === 'active').length;
-  const disabledCount = users.filter((u) => u.status === 'disabled').length;
+  async function handleCopy(text: string, id: string) {
+    const ok = await copyToClipboardSafe(text);
+    if (ok) {
+      setCopiedKeyId(id);
+      setTimeout(() => setCopiedKeyId(null), 2000);
+    }
+  }
+
+  // Metrics summary
+  const activeAccountsCount = users.filter((u) => u.status === 'active').length;
+  const expiringSoonCount = users.filter((u) => u.license?.is_expiring_soon).length;
+  const activeLicensesCount = users.filter((u) => u.license?.status === 'active' || u.license?.status === 'used').length;
+  const totalDevicesUsed = users.reduce((acc, u) => acc + (u.license?.used_devices || 0), 0);
 
   return (
     <div className="space-y-6">
       {/* Top Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-white flex items-center gap-2.5">
-            <Users className="h-6 w-6 text-[#ff5f15]" />
-            Application Users
-          </h1>
+          <div className="flex items-center gap-2.5">
+            <div className="h-9 w-9 rounded-xl bg-gradient-to-br from-[#ff5f15]/20 to-black/40 border border-[#ff5f15]/30 flex items-center justify-center text-[#ff5f15]">
+              <Users className="h-5 w-5" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold tracking-tight text-white flex items-center gap-2">
+                Application Users
+                <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-[#222222] text-[#aaaaaa] border border-[#2d2d2d]">
+                  {totalCount} Total
+                </span>
+              </h1>
+            </div>
+          </div>
           <p className="text-sm text-[#727275] mt-1">
-            End-user identity pool across your developer applications. Passwords are encrypted with bcrypt.
+            End-user identity pool, subscription tiers, masked license keys, device usage, and real-time authentication logs.
           </p>
         </div>
+
         <div className="flex items-center gap-2.5">
           <button
-            onClick={() => fetchUsers()}
+            onClick={() => fetchUsers(currentPage)}
             disabled={isLoading}
             className="p-2.5 rounded-xl bg-[#1a1a1a] border border-[#262626] text-[#727275] hover:text-white hover:border-[#333333] transition-colors cursor-pointer"
-            title="Refresh"
+            title="Refresh Users"
           >
             <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin text-[#ff5f15]' : ''}`} />
           </button>
           <button
             onClick={() => {
-              setCreateError(null);
               setIsCreateModalOpen(true);
             }}
             disabled={applications.length === 0}
@@ -308,57 +311,88 @@ export default function UsersPage() {
       </div>
 
       {/* Metrics Row */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-5 gap-3.5">
         <div className="p-4 rounded-2xl bg-[#161616] border border-[#222222]">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-[#727275] uppercase tracking-wider">
-              Total End Users
-            </span>
+          <div className="flex items-center justify-between text-[#727275]">
+            <span className="text-xs font-semibold uppercase tracking-wider">Total Users</span>
             <Users className="h-4 w-4 text-[#ff5f15]" />
           </div>
-          <p className="text-2xl font-bold text-white mt-2">{users.length}</p>
+          <p className="text-2xl font-bold text-white mt-2">{totalCount}</p>
         </div>
+
         <div className="p-4 rounded-2xl bg-[#161616] border border-[#222222]">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-[#727275] uppercase tracking-wider">
-              Active Accounts
-            </span>
+          <div className="flex items-center justify-between text-[#727275]">
+            <span className="text-xs font-semibold uppercase tracking-wider">Active Accounts</span>
             <CheckCircle2 className="h-4 w-4 text-emerald-400" />
           </div>
-          <p className="text-2xl font-bold text-white mt-2">{activeCount}</p>
+          <p className="text-2xl font-bold text-white mt-2">{activeAccountsCount}</p>
         </div>
+
         <div className="p-4 rounded-2xl bg-[#161616] border border-[#222222]">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-[#727275] uppercase tracking-wider">
-              Disabled Accounts
-            </span>
-            <XCircle className="h-4 w-4 text-amber-500" />
+          <div className="flex items-center justify-between text-[#727275]">
+            <span className="text-xs font-semibold uppercase tracking-wider">Active Licenses</span>
+            <KeyRound className="h-4 w-4 text-blue-400" />
           </div>
-          <p className="text-2xl font-bold text-white mt-2">{disabledCount}</p>
+          <p className="text-2xl font-bold text-white mt-2">{activeLicensesCount}</p>
+        </div>
+
+        <div className="p-4 rounded-2xl bg-[#161616] border border-[#222222]">
+          <div className="flex items-center justify-between text-[#727275]">
+            <span className="text-xs font-semibold uppercase tracking-wider">Expiring Soon (≤7d)</span>
+            <AlertTriangle className={`h-4 w-4 ${expiringSoonCount > 0 ? 'text-amber-400 animate-pulse' : 'text-[#727275]'}`} />
+          </div>
+          <p className={`text-2xl font-bold mt-2 ${expiringSoonCount > 0 ? 'text-amber-400' : 'text-white'}`}>
+            {expiringSoonCount}
+          </p>
+        </div>
+
+        <div className="p-4 rounded-2xl bg-[#161616] border border-[#222222] col-span-2 sm:col-span-1">
+          <div className="flex items-center justify-between text-[#727275]">
+            <span className="text-xs font-semibold uppercase tracking-wider">Devices In Use</span>
+            <Laptop className="h-4 w-4 text-purple-400" />
+          </div>
+          <p className="text-2xl font-bold text-white mt-2">{totalDevicesUsed}</p>
         </div>
       </div>
 
       {/* Filter and Search Bar */}
-      <div className="p-4 rounded-2xl bg-[#161616] border border-[#222222] flex flex-col md:flex-row gap-3 items-center justify-between">
-        <form onSubmit={handleSearch} className="relative w-full md:w-80">
-          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-[#555555]" />
-          <input
-            type="text"
-            placeholder="Search email or username..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-9 pr-4 py-2 rounded-xl bg-[#111111] border border-[#262626] text-sm text-white placeholder-[#555555] focus:outline-none focus:border-[#ff5f15]/50 transition-colors"
-          />
-        </form>
+      <div className="p-4 rounded-2xl bg-[#161616] border border-[#222222] space-y-3">
+        <div className="flex flex-col lg:flex-row gap-3 items-stretch lg:items-center justify-between">
+          {/* Search box */}
+          <form onSubmit={handleSearch} className="relative flex-1 max-w-md">
+            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-[#555555]" />
+            <input
+              type="text"
+              placeholder="Search email, username, or license key..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full pl-9 pr-4 py-2.5 rounded-xl bg-[#111111] border border-[#262626] text-sm text-white placeholder-[#555555] focus:outline-none focus:border-[#ff5f15]/50 transition-colors"
+            />
+          </form>
 
-        <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
-          {/* Application Selector */}
-          <div className="flex items-center gap-2 w-full sm:w-auto">
-            <Layers className="h-4 w-4 text-[#727275]" />
+          {/* Quick Clear Filters Button */}
+          {isFiltered && (
+            <button
+              onClick={handleResetFilters}
+              className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-[#222222] hover:bg-[#282828] text-xs font-semibold text-[#aaaaaa] hover:text-white transition-colors cursor-pointer shrink-0"
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+              Reset Filters
+            </button>
+          )}
+        </div>
+
+        {/* Filter Dropdowns Grid */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5 pt-2 border-t border-[#222222]">
+          {/* 1. Application Filter */}
+          <div className="space-y-1">
+            <label className="text-[10px] font-semibold text-[#727275] uppercase tracking-wider block">
+              Application
+            </label>
             <select
               value={selectedAppId}
               onChange={(e) => setSelectedAppId(e.target.value)}
-              className="px-3 py-2 rounded-xl bg-[#111111] border border-[#262626] text-xs text-white focus:outline-none focus:border-[#ff5f15]/50 transition-colors w-full sm:w-auto cursor-pointer"
+              className="w-full px-2.5 py-2 rounded-xl bg-[#111111] border border-[#262626] text-xs text-white focus:outline-none focus:border-[#ff5f15]/50 transition-colors cursor-pointer"
             >
               <option value="all">All Applications</option>
               {applications.map((app) => (
@@ -369,18 +403,76 @@ export default function UsersPage() {
             </select>
           </div>
 
-          {/* Status Filter */}
-          <div className="flex items-center gap-2 w-full sm:w-auto">
-            <Filter className="h-4 w-4 text-[#727275]" />
+          {/* 2. Account Status Filter */}
+          <div className="space-y-1">
+            <label className="text-[10px] font-semibold text-[#727275] uppercase tracking-wider block">
+              Account Status
+            </label>
             <select
               value={selectedStatus}
               onChange={(e) => setSelectedStatus(e.target.value)}
-              className="px-3 py-2 rounded-xl bg-[#111111] border border-[#262626] text-xs text-white focus:outline-none focus:border-[#ff5f15]/50 transition-colors w-full sm:w-auto cursor-pointer"
+              className="w-full px-2.5 py-2 rounded-xl bg-[#111111] border border-[#262626] text-xs text-white focus:outline-none focus:border-[#ff5f15]/50 transition-colors cursor-pointer"
             >
-              <option value="all">All Statuses</option>
+              <option value="all">All Account Statuses</option>
               <option value="active">Active</option>
               <option value="disabled">Disabled</option>
               <option value="suspended">Suspended</option>
+            </select>
+          </div>
+
+          {/* 3. License Status Filter */}
+          <div className="space-y-1">
+            <label className="text-[10px] font-semibold text-[#727275] uppercase tracking-wider block">
+              License Status
+            </label>
+            <select
+              value={selectedLicenseStatus}
+              onChange={(e) => setSelectedLicenseStatus(e.target.value)}
+              className="w-full px-2.5 py-2 rounded-xl bg-[#111111] border border-[#262626] text-xs text-white focus:outline-none focus:border-[#ff5f15]/50 transition-colors cursor-pointer"
+            >
+              <option value="all">All License Statuses</option>
+              <option value="active">Active</option>
+              <option value="used">Used</option>
+              <option value="expired">Expired</option>
+              <option value="revoked">Revoked</option>
+              <option value="no_license">No License</option>
+            </select>
+          </div>
+
+          {/* 4. Subscription Filter */}
+          <div className="space-y-1">
+            <label className="text-[10px] font-semibold text-[#727275] uppercase tracking-wider block">
+              Subscription
+            </label>
+            <select
+              value={selectedSubscription}
+              onChange={(e) => setSelectedSubscription(e.target.value)}
+              className="w-full px-2.5 py-2 rounded-xl bg-[#111111] border border-[#262626] text-xs text-white focus:outline-none focus:border-[#ff5f15]/50 transition-colors cursor-pointer"
+            >
+              <option value="all">All Subscriptions</option>
+              {AVAILABLE_SUBSCRIPTIONS.map((tier) => (
+                <option key={tier.id} value={tier.id}>
+                  {tier.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* 5. Expiry Filter */}
+          <div className="space-y-1 col-span-2 sm:col-span-1">
+            <label className="text-[10px] font-semibold text-[#727275] uppercase tracking-wider block">
+              Expiry Horizon
+            </label>
+            <select
+              value={selectedExpiry}
+              onChange={(e) => setSelectedExpiry(e.target.value)}
+              className="w-full px-2.5 py-2 rounded-xl bg-[#111111] border border-[#262626] text-xs text-white focus:outline-none focus:border-[#ff5f15]/50 transition-colors cursor-pointer"
+            >
+              <option value="all">All Expiry</option>
+              <option value="active">Active (Valid)</option>
+              <option value="expiring_soon">Expiring Soon (≤ 7d)</option>
+              <option value="expired">Expired (0 days)</option>
+              <option value="no_expiry">No Expiry (Lifetime)</option>
             </select>
           </div>
         </div>
@@ -397,100 +489,13 @@ export default function UsersPage() {
             <p className="text-xs text-[#888888] leading-relaxed">
               The <code className="px-1.5 py-0.5 rounded bg-[#202020] text-amber-400 font-mono text-[11px]">public.application_users</code> table has not been created yet in your Supabase database.
             </p>
-            <p className="text-xs text-[#727275]">
-              Open your <strong>Supabase Dashboard &gt; SQL Editor</strong> and execute the safe migration located at:
-            </p>
-            <div className="p-2.5 rounded-xl bg-[#0e0e0e] border border-[#222222] text-xs font-mono text-white flex items-center justify-between gap-2">
-              <span className="truncate text-left text-[#aaaaaa]">supabase/migrations/20260925130000_create_application_users.sql</span>
-              <button
-                onClick={async () => {
-                  await copyToClipboardSafe(`-- 1. Create or replace the updated_at trigger function first
-CREATE OR REPLACE FUNCTION public.update_updated_at_column()
-RETURNS TRIGGER
-LANGUAGE plpgsql
-AS $$
-BEGIN
-  NEW.updated_at = NOW();
-  RETURN NEW;
-END;
-$$;
-
--- 2. Create application_users table if it does not already exist
-CREATE TABLE IF NOT EXISTS public.application_users (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  application_id UUID NOT NULL REFERENCES public.applications(id) ON DELETE CASCADE,
-  username TEXT,
-  email TEXT NOT NULL,
-  password_hash TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled', 'suspended')),
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  last_login_at TIMESTAMPTZ,
-  CONSTRAINT app_users_email_unique UNIQUE (application_id, email)
-);
-
--- 3. Indexes for fast application-scoped lookups
-CREATE INDEX IF NOT EXISTS idx_app_users_application_id ON public.application_users(application_id);
-CREATE INDEX IF NOT EXISTS idx_app_users_email ON public.application_users(email);
-CREATE INDEX IF NOT EXISTS idx_app_users_status ON public.application_users(status);
-CREATE INDEX IF NOT EXISTS idx_app_users_created_at ON public.application_users(created_at DESC);
-
--- 4. Trigger for automatic updated_at updates
-DROP TRIGGER IF EXISTS set_app_users_updated_at ON public.application_users;
-CREATE TRIGGER set_app_users_updated_at
-  BEFORE UPDATE ON public.application_users
-  FOR EACH ROW
-  EXECUTE FUNCTION public.update_updated_at_column();
-
--- 5. Enable Row Level Security
-ALTER TABLE public.application_users ENABLE ROW LEVEL SECURITY;
-
--- 6. Helper function to verify platform owner identity
-CREATE OR REPLACE FUNCTION public.is_owner()
-RETURNS BOOLEAN
-LANGUAGE sql
-STABLE
-SECURITY DEFINER
-SET search_path = public
-AS $$
-  SELECT EXISTS (
-    SELECT 1 FROM public.profiles
-    WHERE id = auth.uid() AND upper(role) = 'OWNER'
-  );
-$$;
-
--- 7. Owner-scoped RLS policy for application_users
-DROP POLICY IF EXISTS "Owner can manage application_users" ON public.application_users;
-CREATE POLICY "Owner can manage application_users" ON public.application_users
-  FOR ALL TO authenticated
-  USING (
-    public.is_owner() AND EXISTS (
-      SELECT 1 FROM public.applications
-      WHERE id = application_users.application_id AND owner_id = auth.uid()
-    )
-  )
-  WITH CHECK (
-    public.is_owner() AND EXISTS (
-      SELECT 1 FROM public.applications
-      WHERE id = application_users.application_id AND owner_id = auth.uid()
-    )
-  );
-
--- 8. Notify PostgREST to reload the schema cache immediately
-NOTIFY pgrst, 'reload schema';`);
-                }}
-                className="px-2.5 py-1 rounded bg-[#1f1f1f] hover:bg-[#282828] text-xs text-[#ff5f15] hover:text-white transition-colors flex-shrink-0"
-              >
-                Copy SQL
-              </button>
-            </div>
           </div>
           <button
-            onClick={() => fetchUsers()}
+            onClick={() => fetchUsers(currentPage)}
             className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[#202020] text-xs font-semibold text-white hover:bg-[#282828] cursor-pointer"
           >
             <RefreshCw className="h-3.5 w-3.5" />
-            Refresh after applying SQL
+            Refresh
           </button>
         </div>
       )}
@@ -503,7 +508,7 @@ NOTIFY pgrst, 'reload schema';`);
             <span>{error}</span>
           </div>
           <button
-            onClick={() => fetchUsers()}
+            onClick={() => fetchUsers(currentPage)}
             className="px-3 py-1 rounded-lg bg-[#202020] hover:bg-[#282828] text-xs text-white transition-colors"
           >
             Retry
@@ -511,12 +516,12 @@ NOTIFY pgrst, 'reload schema';`);
         </div>
       )}
 
-      {/* Users Table */}
+      {/* USERS TABLE */}
       <div className="rounded-2xl bg-[#161616] border border-[#222222] overflow-hidden">
         {isLoading ? (
           <div className="py-20 flex flex-col items-center justify-center text-center">
             <RefreshCw className="h-7 w-7 text-[#ff5f15] animate-spin mb-3" />
-            <p className="text-sm text-[#727275]">Loading user accounts...</p>
+            <p className="text-sm text-[#727275]">Loading application users...</p>
           </div>
         ) : users.length === 0 ? (
           <div className="py-20 flex flex-col items-center justify-center text-center px-4">
@@ -525,11 +530,19 @@ NOTIFY pgrst, 'reload schema';`);
             </div>
             <h3 className="text-base font-semibold text-white">No users found</h3>
             <p className="text-sm text-[#727275] max-w-sm mt-1">
-              {searchQuery || selectedAppId !== 'all' || selectedStatus !== 'all'
-                ? 'No user accounts match your current filter parameters.'
+              {isFiltered
+                ? 'No users match your active filter settings. Try resetting your filters.'
                 : 'Get started by creating the first end user for your application.'}
             </p>
-            {applications.length > 0 && (
+            {isFiltered ? (
+              <button
+                onClick={handleResetFilters}
+                className="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[#222222] hover:bg-[#2a2a2a] text-white text-xs font-semibold transition-colors cursor-pointer"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                Reset Filters
+              </button>
+            ) : applications.length > 0 ? (
               <button
                 onClick={() => setIsCreateModalOpen(true)}
                 className="mt-4 flex items-center gap-2 px-4 py-2 rounded-xl bg-[#ff5f15] text-white text-xs font-semibold cursor-pointer"
@@ -537,142 +550,369 @@ NOTIFY pgrst, 'reload schema';`);
                 <Plus className="h-3.5 w-3.5" />
                 Create User
               </button>
-            )}
+            ) : null}
           </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
-              <thead className="bg-[#111111] text-[#727275] text-xs uppercase font-medium tracking-wider border-b border-[#222222]">
+              <thead className="bg-[#111111] text-[#727275] text-[11px] uppercase font-semibold tracking-wider border-b border-[#222222]">
                 <tr>
-                  <th className="py-3.5 px-4">User</th>
-                  <th className="py-3.5 px-4">Application</th>
-                  <th className="py-3.5 px-4">Status</th>
-                  <th className="py-3.5 px-4">Created</th>
-                  <th className="py-3.5 px-4">Last Login</th>
-                  <th className="py-3.5 px-4 text-right">Actions</th>
+                  <th className="py-3.5 px-4 min-w-[200px]">User</th>
+                  <th className="py-3.5 px-4 min-w-[160px]">Application</th>
+                  <th className="py-3.5 px-4 min-w-[200px]">License / Subscription</th>
+                  <th className="py-3.5 px-4 min-w-[150px]">Expiry</th>
+                  <th className="py-3.5 px-4 min-w-[140px]">Devices</th>
+                  <th className="py-3.5 px-4 min-w-[150px]">Activity</th>
+                  <th className="py-3.5 px-4 min-w-[100px]">Status</th>
+                  <th className="py-3.5 px-4 text-right min-w-[130px]">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#222222]">
-                {users.map((user) => (
-                  <tr key={user.id} className="hover:bg-[#1a1a1a]/50 transition-colors">
-                    <td className="py-3.5 px-4">
-                      <div className="flex items-center gap-3">
-                        <div className="h-8 w-8 rounded-xl bg-[#222222] border border-[#2d2d2d] flex items-center justify-center font-bold text-xs text-[#ff5f15]">
-                          {user.email[0].toUpperCase()}
-                        </div>
-                        <div>
-                          <div className="font-medium text-white flex items-center gap-1.5">
-                            {user.email}
+                {users.map((user) => {
+                  const { license, activity } = user;
+                  const hasLic = Boolean(license);
+                  const allowedDev = license?.allowed_devices ?? null;
+                  const usedDev = license?.used_devices ?? 0;
+                  const isUnlim = license?.is_unlimited_devices ?? false;
+                  const remainDev = isUnlim ? null : (license?.remaining_devices ?? null);
+                  const devPercent =
+                    isUnlim || !allowedDev || allowedDev === 0
+                      ? 0
+                      : Math.min(100, Math.round((usedDev / allowedDev) * 100));
+
+                  return (
+                    <tr key={user.id} className="hover:bg-[#1a1a1a]/60 transition-colors">
+                      {/* USER COLUMN */}
+                      <td className="py-3.5 px-4">
+                        <div className="flex items-center gap-3">
+                          <div className="h-8 w-8 rounded-xl bg-gradient-to-br from-[#222222] to-[#181818] border border-[#2d2d2d] flex items-center justify-center font-bold text-xs text-[#ff5f15] shrink-0">
+                            {user.email[0].toUpperCase()}
                           </div>
-                          {user.username && (
-                            <span className="text-xs text-[#727275]">@{user.username}</span>
-                          )}
+                          <div className="min-w-0">
+                            <div className="font-semibold text-white flex items-center gap-1.5 truncate">
+                              <span className="truncate">{user.email}</span>
+                              <button
+                                onClick={() => handleCopy(user.email, `email_${user.id}`)}
+                                className="text-[#555555] hover:text-white transition-colors cursor-pointer shrink-0"
+                                title="Copy Email"
+                              >
+                                {copiedKeyId === `email_${user.id}` ? (
+                                  <Check className="h-3 w-3 text-emerald-400" />
+                                ) : (
+                                  <Copy className="h-3 w-3" />
+                                )}
+                              </button>
+                            </div>
+                            <div className="text-xs text-[#727275] truncate">
+                              {user.username ? `@${user.username}` : <span className="text-[#555555]">No username</span>}
+                            </div>
+                          </div>
                         </div>
-                      </div>
-                    </td>
-                    <td className="py-3.5 px-4">
-                      {user.application ? (
-                        <Link
-                          href={`/dashboard/applications/${user.application_id}`}
-                          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#1a1a1a] border border-[#282828] text-xs font-mono text-[#dcdcdc] hover:border-[#ff5f15]/50 transition-colors"
-                        >
-                          <Layers className="h-3 w-3 text-[#ff5f15]" />
-                          {user.application.name}
-                        </Link>
-                      ) : (
-                        <span className="text-xs font-mono text-[#555555]">
-                          {user.application_id.slice(0, 8)}...
-                        </span>
-                      )}
-                    </td>
-                    <td className="py-3.5 px-4">
-                      <span
-                        className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                          user.status === 'active'
-                            ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                            : user.status === 'disabled'
-                            ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
-                            : 'bg-red-500/10 text-red-400 border border-red-500/20'
-                        }`}
-                      >
+                      </td>
+
+                      {/* APPLICATION COLUMN */}
+                      <td className="py-3.5 px-4">
+                        {user.application ? (
+                          <Link
+                            href={`/dashboard/applications/${user.application_id}`}
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#1a1a1a] border border-[#282828] text-xs font-mono text-[#dcdcdc] hover:border-[#ff5f15]/50 transition-colors max-w-[160px] truncate"
+                            title={user.application.name}
+                          >
+                            <Layers className="h-3 w-3 text-[#ff5f15] shrink-0" />
+                            <span className="truncate">{user.application.name}</span>
+                          </Link>
+                        ) : (
+                          <span className="text-xs font-mono text-[#555555]">
+                            {user.application_id.slice(0, 8)}...
+                          </span>
+                        )}
+                      </td>
+
+                      {/* LICENSE / SUBSCRIPTION COLUMN */}
+                      <td className="py-3.5 px-4">
+                        {hasLic && license ? (
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-mono text-xs text-[#e0e0e0] font-medium">
+                                {license.license_key_masked}
+                              </span>
+                              <button
+                                onClick={() => handleCopy(license.license_key_masked, `lic_${user.id}`)}
+                                className="text-[#555555] hover:text-white transition-colors cursor-pointer shrink-0"
+                                title="Copy Key"
+                              >
+                                {copiedKeyId === `lic_${user.id}` ? (
+                                  <Check className="h-3 w-3 text-emerald-400" />
+                                ) : (
+                                  <Copy className="h-3 w-3" />
+                                )}
+                              </button>
+                            </div>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span
+                                className={`px-2 py-0.5 rounded text-[10px] font-semibold border ${license.subscription_badge_color}`}
+                              >
+                                {license.subscription_name}
+                              </span>
+                              <span
+                                className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                                  license.status === 'active'
+                                    ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                                    : license.status === 'used'
+                                    ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
+                                    : license.status === 'expired'
+                                    ? 'bg-red-500/10 text-red-400 border border-red-500/20'
+                                    : 'bg-zinc-800 text-zinc-400 border border-zinc-700'
+                                }`}
+                              >
+                                <span
+                                  className={`h-1 w-1 rounded-full ${
+                                    license.status === 'active'
+                                      ? 'bg-emerald-400'
+                                      : license.status === 'used'
+                                      ? 'bg-blue-400'
+                                      : license.status === 'expired'
+                                      ? 'bg-red-400'
+                                      : 'bg-zinc-400'
+                                  }`}
+                                />
+                                {license.status.toUpperCase()}
+                              </span>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="space-y-0.5">
+                            <span className="text-xs font-semibold text-[#727275]">No License</span>
+                            <span className="block text-[10px] text-[#555555]">Standard Access</span>
+                          </div>
+                        )}
+                      </td>
+
+                      {/* EXPIRY COLUMN */}
+                      <td className="py-3.5 px-4 whitespace-nowrap">
+                        {hasLic && license ? (
+                          <div className="space-y-1">
+                            <div className="text-xs font-medium text-[#cccccc] flex items-center gap-1">
+                              <Calendar className="h-3 w-3 text-[#ff5f15]" />
+                              <span>{license.formatted_expiry}</span>
+                            </div>
+                            <div>
+                              {license.is_expired ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-red-500/10 text-red-400 border border-red-500/20">
+                                  <AlertCircle className="h-3 w-3" />
+                                  Expired (0d left)
+                                </span>
+                              ) : license.is_expiring_soon ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20 animate-pulse">
+                                  <AlertTriangle className="h-3 w-3" />
+                                  {license.days_remaining_text}
+                                </span>
+                              ) : license.expires_at ? (
+                                <span className="text-[11px] text-[#888888] font-mono">
+                                  {license.days_remaining_text}
+                                </span>
+                              ) : (
+                                <span className="text-[11px] text-[#727275] font-medium">
+                                  Never expires
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="space-y-0.5">
+                            <span className="text-xs text-[#727275]">No Expiry</span>
+                            <span className="block text-[10px] text-[#555555]">Never expires</span>
+                          </div>
+                        )}
+                      </td>
+
+                      {/* DEVICES COLUMN */}
+                      <td className="py-3.5 px-4 whitespace-nowrap">
+                        {hasLic && license ? (
+                          <div className="space-y-1.5 min-w-[120px]">
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="font-semibold text-white">
+                                {isUnlim ? 'Unlimited' : `${usedDev} / ${allowedDev}`}
+                              </span>
+                              <span className="text-[11px] text-[#727275]">
+                                {isUnlim
+                                  ? 'No limit'
+                                  : `${remainDev} left`}
+                              </span>
+                            </div>
+                            {!isUnlim && (
+                              <div className="w-full bg-[#111111] rounded-full h-1.5 overflow-hidden border border-[#242424]">
+                                <div
+                                  className={`h-full rounded-full transition-all duration-300 ${
+                                    devPercent >= 100
+                                      ? 'bg-red-500'
+                                      : devPercent >= 75
+                                      ? 'bg-amber-500'
+                                      : 'bg-[#ff5f15]'
+                                  }`}
+                                  style={{ width: `${Math.max(8, devPercent)}%` }}
+                                />
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-xs text-[#555555]">Not tracked</span>
+                        )}
+                      </td>
+
+                      {/* ACTIVITY COLUMN */}
+                      <td className="py-3.5 px-4 whitespace-nowrap">
+                        <div className="space-y-0.5">
+                          <div className="text-xs text-[#dcdcdc] flex items-center gap-1">
+                            <span className="text-[#666666]">Login:</span>
+                            <span className="truncate max-w-[120px]" title={activity.formatted_last_login}>
+                              {user.last_login_at ? user.last_login_at.split('T')[0] : 'Never'}
+                            </span>
+                          </div>
+                          <div className="text-[11px] text-[#727275]">
+                            Created: {user.created_at ? user.created_at.split('T')[0] : '—'}
+                          </div>
+                        </div>
+                      </td>
+
+                      {/* STATUS COLUMN */}
+                      <td className="py-3.5 px-4 whitespace-nowrap">
                         <span
-                          className={`h-1.5 w-1.5 rounded-full ${
+                          className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold ${
                             user.status === 'active'
-                              ? 'bg-emerald-400'
+                              ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
                               : user.status === 'disabled'
-                              ? 'bg-amber-400'
-                              : 'bg-red-400'
+                              ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                              : 'bg-red-500/10 text-red-400 border border-red-500/20'
                           }`}
-                        />
-                        {user.status}
-                      </span>
-                    </td>
-                    <td className="py-3.5 px-4 text-xs text-[#727275] whitespace-nowrap">
-                      {new Date(user.created_at).toLocaleDateString()}
-                    </td>
-                    <td className="py-3.5 px-4 text-xs text-[#727275] whitespace-nowrap">
-                      {user.last_login_at
-                        ? new Date(user.last_login_at).toLocaleString()
-                        : 'Never logged in'}
-                    </td>
-                    <td className="py-3.5 px-4 text-right">
-                      <div className="flex items-center justify-end gap-1.5">
-                        <button
-                          onClick={() => {
-                            setActiveUser(user);
-                            setIsViewModalOpen(true);
-                          }}
-                          className="p-1.5 rounded-lg bg-[#202020] hover:bg-[#282828] text-[#888888] hover:text-white transition-colors cursor-pointer"
-                          title="View Details"
                         >
-                          <Eye className="h-3.5 w-3.5" />
-                        </button>
-                        <button
-                          onClick={() => handleToggleStatus(user)}
-                          disabled={togglingUserId === user.id}
-                          className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
-                            user.status === 'active'
-                              ? 'bg-[#202020] hover:bg-amber-500/20 text-[#888888] hover:text-amber-400'
-                              : 'bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400'
-                          }`}
-                          title={user.status === 'active' ? 'Disable Account' : 'Enable Account'}
-                        >
-                          {user.status === 'active' ? (
-                            <XCircle className="h-3.5 w-3.5" />
-                          ) : (
-                            <CheckCircle2 className="h-3.5 w-3.5" />
-                          )}
-                        </button>
-                        <button
-                          onClick={() => {
-                            setActiveUser(user);
-                            setResetPassword('');
-                            setResetError(null);
-                            setResetSuccess(false);
-                            setIsResetPasswordModalOpen(true);
-                          }}
-                          className="p-1.5 rounded-lg bg-[#202020] hover:bg-[#282828] text-[#888888] hover:text-[#ff5f15] transition-colors cursor-pointer"
-                          title="Reset Password"
-                        >
-                          <Lock className="h-3.5 w-3.5" />
-                        </button>
-                        <button
-                          onClick={() => {
-                            setActiveUser(user);
-                            setDeleteError(null);
-                            setIsDeleteModalOpen(true);
-                          }}
-                          className="p-1.5 rounded-lg bg-[#202020] hover:bg-red-500/20 text-[#888888] hover:text-red-400 transition-colors cursor-pointer"
-                          title="Delete User"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                          <span
+                            className={`h-1.5 w-1.5 rounded-full ${
+                              user.status === 'active'
+                                ? 'bg-emerald-400'
+                                : user.status === 'disabled'
+                                ? 'bg-amber-400'
+                                : 'bg-red-400'
+                            }`}
+                          />
+                          {user.status.toUpperCase()}
+                        </span>
+                      </td>
+
+                      {/* ACTIONS COLUMN */}
+                      <td className="py-3.5 px-4 text-right whitespace-nowrap">
+                        <div className="flex items-center justify-end gap-1.5">
+                          <button
+                            onClick={() => {
+                              setActiveUser(user);
+                              setIsViewModalOpen(true);
+                            }}
+                            className="p-1.5 rounded-lg bg-[#202020] hover:bg-[#282828] text-[#888888] hover:text-white transition-colors cursor-pointer"
+                            title="👁 View User Details"
+                          >
+                            <Eye className="h-3.5 w-3.5" />
+                          </button>
+
+                          <button
+                            onClick={() => handleToggleStatus(user)}
+                            disabled={togglingUserId === user.id}
+                            className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+                              user.status === 'active'
+                                ? 'bg-[#202020] hover:bg-amber-500/20 text-[#888888] hover:text-amber-400'
+                                : 'bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400'
+                            }`}
+                            title={user.status === 'active' ? '⊘ Disable Account' : '✓ Enable Account'}
+                          >
+                            {user.status === 'active' ? (
+                              <XCircle className="h-3.5 w-3.5" />
+                            ) : (
+                              <CheckCircle2 className="h-3.5 w-3.5" />
+                            )}
+                          </button>
+
+                          <button
+                            onClick={() => {
+                              setActiveUser(user);
+                              setResetPassword('');
+                              setResetError(null);
+                              setResetSuccess(false);
+                              setIsResetPasswordModalOpen(true);
+                            }}
+                            className="p-1.5 rounded-lg bg-[#202020] hover:bg-[#282828] text-[#888888] hover:text-[#ff5f15] transition-colors cursor-pointer"
+                            title="🔒 Reset Password"
+                          >
+                            <Lock className="h-3.5 w-3.5" />
+                          </button>
+
+                          <button
+                            onClick={() => {
+                              setActiveUser(user);
+                              setDeleteError(null);
+                              setIsDeleteModalOpen(true);
+                            }}
+                            className="p-1.5 rounded-lg bg-[#202020] hover:bg-red-500/20 text-[#888888] hover:text-red-400 transition-colors cursor-pointer"
+                            title="🗑 Delete User"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {/* Pagination Footer */}
+        {!isLoading && users.length > 0 && (
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 py-3 bg-[#111111] border-t border-[#222222] text-xs text-[#727275]">
+            <div className="flex items-center gap-3">
+              <span>
+                Showing <strong className="text-white">{(currentPage - 1) * pageSize + 1}</strong> to{' '}
+                <strong className="text-white">
+                  {Math.min(currentPage * pageSize, totalCount)}
+                </strong>{' '}
+                of <strong className="text-white">{totalCount}</strong> users
+              </span>
+              <div className="flex items-center gap-1.5">
+                <span>Per page:</span>
+                <select
+                  value={pageSize}
+                  onChange={(e) => setPageSize(Number(e.target.value))}
+                  className="px-2 py-1 rounded-lg bg-[#181818] border border-[#282828] text-xs text-white focus:outline-none cursor-pointer"
+                >
+                  <option value={10}>10</option>
+                  <option value={20}>20</option>
+                  <option value={50}>50</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => fetchUsers(Math.max(1, currentPage - 1))}
+                disabled={currentPage <= 1 || isLoading}
+                className="p-1.5 rounded-lg bg-[#181818] border border-[#282828] text-[#888888] hover:text-white hover:border-[#383838] disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                title="Previous Page"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+
+              <span className="px-3 py-1 text-white font-mono">
+                {currentPage} / {totalPages}
+              </span>
+
+              <button
+                onClick={() => fetchUsers(Math.min(totalPages, currentPage + 1))}
+                disabled={currentPage >= totalPages || isLoading}
+                className="p-1.5 rounded-lg bg-[#181818] border border-[#282828] text-[#888888] hover:text-white hover:border-[#383838] disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                title="Next Page"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </button>
+            </div>
           </div>
         )}
       </div>
@@ -684,104 +924,32 @@ NOTIFY pgrst, 'reload schema';`);
         selectedApplicationId={selectedAppId !== 'all' ? selectedAppId : (applications[0]?.id || '')}
         applications={applications.map((a) => ({ id: a.id, name: a.name, client_id: a.client_id }))}
         onUserCreated={() => {
-          fetchUsers();
+          fetchUsers(1);
         }}
       />
 
-      {/* VIEW USER DETAILS MODAL */}
-      {isViewModalOpen && activeUser && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-2xl bg-[#161616] border border-[#2a2a2a] p-6 shadow-2xl space-y-5">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2.5">
-                <div className="h-9 w-9 rounded-xl bg-[#1f1f1f] border border-[#2d2d2d] flex items-center justify-center text-[#ff5f15]">
-                  <Users className="h-5 w-5" />
-                </div>
-                <div>
-                  <h3 className="font-bold text-white text-base">User Information</h3>
-                  <p className="text-xs text-[#727275]">Application end-user identity</p>
-                </div>
-              </div>
-              <button
-                onClick={() => setIsViewModalOpen(false)}
-                className="text-[#727275] hover:text-white transition-colors cursor-pointer"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="space-y-3 bg-[#111111] p-4 rounded-xl border border-[#242424] text-xs">
-              <div>
-                <span className="text-[#666666] uppercase tracking-wider block font-semibold mb-0.5">
-                  User ID
-                </span>
-                <span className="font-mono text-white select-all">{activeUser.id}</span>
-              </div>
-              <div>
-                <span className="text-[#666666] uppercase tracking-wider block font-semibold mb-0.5">
-                  Email
-                </span>
-                <span className="font-medium text-white">{activeUser.email}</span>
-              </div>
-              <div>
-                <span className="text-[#666666] uppercase tracking-wider block font-semibold mb-0.5">
-                  Username
-                </span>
-                <span className="text-white">{activeUser.username || '—'}</span>
-              </div>
-              <div>
-                <span className="text-[#666666] uppercase tracking-wider block font-semibold mb-0.5">
-                  Application
-                </span>
-                <span className="text-white font-medium">
-                  {activeUser.application?.name || activeUser.application_id}
-                </span>
-              </div>
-              <div>
-                <span className="text-[#666666] uppercase tracking-wider block font-semibold mb-0.5">
-                  Status
-                </span>
-                <span
-                  className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold ${
-                    activeUser.status === 'active'
-                      ? 'bg-emerald-500/20 text-emerald-400'
-                      : 'bg-amber-500/20 text-amber-400'
-                  }`}
-                >
-                  {activeUser.status.toUpperCase()}
-                </span>
-              </div>
-              <div>
-                <span className="text-[#666666] uppercase tracking-wider block font-semibold mb-0.5">
-                  Account Created
-                </span>
-                <span className="text-[#aaaaaa]">
-                  {new Date(activeUser.created_at).toLocaleString()}
-                </span>
-              </div>
-              <div>
-                <span className="text-[#666666] uppercase tracking-wider block font-semibold mb-0.5">
-                  Last Login
-                </span>
-                <span className="text-[#aaaaaa]">
-                  {activeUser.last_login_at
-                    ? new Date(activeUser.last_login_at).toLocaleString()
-                    : 'No recorded logins'}
-                </span>
-              </div>
-            </div>
-
-            <div className="flex justify-end">
-              <button
-                onClick={() => setIsViewModalOpen(false)}
-                className="px-4 py-2 rounded-xl bg-[#202020] hover:bg-[#282828] text-xs font-semibold text-white transition-colors cursor-pointer"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* STRUCTURED USER DETAILS MODAL */}
+      <UserDetailsModal
+        isOpen={isViewModalOpen}
+        onClose={() => {
+          setIsViewModalOpen(false);
+          setActiveUser(null);
+        }}
+        user={activeUser}
+        onToggleStatus={(u) => handleToggleStatus(u)}
+        onOpenResetPassword={(u) => {
+          setIsViewModalOpen(false);
+          setResetPassword('');
+          setResetError(null);
+          setResetSuccess(false);
+          setIsResetPasswordModalOpen(true);
+        }}
+        onOpenDelete={(u) => {
+          setIsViewModalOpen(false);
+          setDeleteError(null);
+          setIsDeleteModalOpen(true);
+        }}
+      />
 
       {/* RESET PASSWORD MODAL */}
       {isResetPasswordModalOpen && activeUser && (
