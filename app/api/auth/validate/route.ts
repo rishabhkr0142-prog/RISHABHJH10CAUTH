@@ -190,21 +190,149 @@ export async function POST(request: Request) {
           );
         }
 
-        const loginTimestamp = new Date().toISOString();
+        // Extract HWID from body or headers
+        const rawHwid =
+          body.hwid ||
+          body.device_id ||
+          body.deviceId ||
+          body.hwId ||
+          request.headers.get('x-hwid') ||
+          request.headers.get('x-device-id');
+        const hwid = rawHwid ? String(rawHwid).trim() : null;
+
+        // Resolve user's associated license in this application
+        const specificLicenseKey =
+          body.license_key || body.license ? String(body.license_key || body.license).trim() : null;
+        let matchedLicense: License | null = null;
+
+        if (specificLicenseKey) {
+          const { data: licByKey } = await admin
+            .from('licenses')
+            .select('*')
+            .eq('application_id', app.id)
+            .eq('license_key', specificLicenseKey)
+            .maybeSingle();
+          if (licByKey) matchedLicense = licByKey as License;
+        }
+
+        if (!matchedLicense) {
+          const { data: appLicenses } = await admin
+            .from('licenses')
+            .select('*')
+            .eq('application_id', app.id);
+
+          const cleanEmail = user.email.toLowerCase().trim();
+          const cleanUsername = user.username?.toLowerCase().trim();
+          const userId = user.id;
+
+          const candidates = ((appLicenses || []) as License[]).filter((lic) => {
+            if (!lic.note) return false;
+            const cleanNote = lic.note.toLowerCase().trim();
+            return (
+              cleanNote === cleanEmail ||
+              cleanNote === userId ||
+              (cleanUsername && cleanNote === cleanUsername) ||
+              cleanNote.includes(cleanEmail) ||
+              cleanNote.includes(userId)
+            );
+          });
+
+          if (candidates.length > 0) {
+            candidates.sort((a, b) => {
+              const score = (l: License) =>
+                l.status === 'active' ? 3 : l.status === 'used' ? 2 : l.status === 'expired' ? 1 : 0;
+              return score(b) - score(a);
+            });
+            matchedLicense = candidates[0];
+          }
+        }
+
+        // If user has a license, enforce license validity and HWID / device binding
+        let usedDevices = matchedLicense
+          ? (matchedLicense.used_devices ?? (matchedLicense.device_hwids?.length || 0))
+          : 0;
+        const now = new Date();
+
+        if (matchedLicense) {
+          if (matchedLicense.status === 'revoked') {
+            return NextResponse.json(
+              { valid: false, error: 'License has been revoked' },
+              { status: 403 }
+            );
+          }
+
+          if (matchedLicense.expires_at && new Date(matchedLicense.expires_at) < now) {
+            if (matchedLicense.status !== 'expired') {
+              await admin
+                .from('licenses')
+                .update({ status: 'expired', updated_at: now.toISOString() })
+                .eq('id', matchedLicense.id);
+            }
+            return NextResponse.json(
+              { valid: false, error: 'License has expired', expires_at: matchedLicense.expires_at },
+              { status: 403 }
+            );
+          }
+
+          // HWID validation & device binding
+          const currentHwids = matchedLicense.device_hwids || [];
+          let updatedHwids = [...currentHwids];
+          usedDevices = matchedLicense.used_devices || currentHwids.length;
+
+          if (hwid) {
+            const hwidKnown = currentHwids.includes(hwid);
+            if (!hwidKnown) {
+              if (usedDevices >= matchedLicense.allowed_devices) {
+                return NextResponse.json(
+                  {
+                    valid: false,
+                    error: `Device limit reached. License is limited to ${matchedLicense.allowed_devices} device(s).`
+                  },
+                  { status: 403 }
+                );
+              }
+              updatedHwids.push(hwid);
+              usedDevices = updatedHwids.length;
+              await admin
+                .from('licenses')
+                .update({
+                  device_hwids: updatedHwids,
+                  used_devices: usedDevices,
+                  status: 'used',
+                  updated_at: now.toISOString()
+                })
+                .eq('id', matchedLicense.id);
+              matchedLicense.device_hwids = updatedHwids;
+              matchedLicense.used_devices = usedDevices;
+              matchedLicense.status = 'used';
+            }
+          }
+        }
+
+        const loginTimestamp = now.toISOString();
+
+        // Check for duplicate rapid retry (< 1.5 seconds) to prevent duplicate log insertion
+        const isRapidRetry =
+          user.last_login_at && now.getTime() - new Date(user.last_login_at).getTime() < 1500;
+
         await admin
           .from('application_users')
-          .update({ last_login_at: loginTimestamp })
+          .update({ last_login_at: loginTimestamp, updated_at: loginTimestamp })
           .eq('id', user.id);
 
-        await admin.from('application_logs').insert({
-          application_id: app.id,
-          event: 'user.login_success',
-          metadata: {
-            userId: user.id,
-            email: user.email,
-            clientId: app.client_id
-          }
-        });
+        if (!isRapidRetry) {
+          await admin.from('application_logs').insert({
+            application_id: app.id,
+            event: 'user.login_success',
+            metadata: {
+              userId: user.id,
+              email: user.email,
+              clientId: app.client_id,
+              licenseId: matchedLicense ? matchedLicense.id : null,
+              hwid: hwid ? `${hwid.slice(0, 4)}...` : null
+            }
+          });
+        }
 
         return NextResponse.json({
           valid: true,
@@ -218,6 +346,17 @@ export async function POST(request: Request) {
             created_at: user.created_at,
             last_login_at: loginTimestamp
           },
+          license: matchedLicense
+            ? {
+                id: matchedLicense.id,
+                license_key: matchedLicense.license_key,
+                subscription: matchedLicense.subscription,
+                status: matchedLicense.status,
+                allowed_devices: matchedLicense.allowed_devices,
+                used_devices: usedDevices,
+                expires_at: matchedLicense.expires_at
+              }
+            : null,
           application: {
             id: app.id,
             name: app.name,
@@ -229,7 +368,14 @@ export async function POST(request: Request) {
       // License Authentication / Validation action
       if (action === 'validate_license' || body.license_key) {
         const rawKey = String(body.license_key || body.license || '').trim();
-        const hwid = body.hwid ? String(body.hwid).trim() : null;
+        const rawHwid =
+          body.hwid ||
+          body.device_id ||
+          body.deviceId ||
+          body.hwId ||
+          request.headers.get('x-hwid') ||
+          request.headers.get('x-device-id');
+        const hwid = rawHwid ? String(rawHwid).trim() : null;
 
         if (!rawKey) {
           return NextResponse.json(
@@ -300,21 +446,62 @@ export async function POST(request: Request) {
                 device_hwids: updatedHwids,
                 used_devices: usedDevices,
                 status: 'used',
-                updated_at: new Date().toISOString()
+                updated_at: now.toISOString()
               })
               .eq('id', license.id);
           }
         }
 
-        await admin.from('application_logs').insert({
-          application_id: app.id,
-          event: 'license.validated',
-          metadata: {
-            licenseId: license.id,
-            subscription: license.subscription,
-            hwid: hwid ? `${hwid.slice(0, 4)}...` : null
-          }
-        });
+        const loginTimestamp = now.toISOString();
+
+        // Resolve associated user if license is linked to a user (via note)
+        let associatedUser: EndUser | null = null;
+        if (license.note) {
+          const cleanNote = license.note.toLowerCase().trim();
+          const { data: users } = await admin
+            .from('application_users')
+            .select('*')
+            .eq('application_id', app.id);
+
+          associatedUser =
+            ((users || []) as EndUser[]).find((u) => {
+              const email = u.email.toLowerCase().trim();
+              const username = u.username?.toLowerCase().trim();
+              return (
+                email === cleanNote ||
+                u.id === cleanNote ||
+                (username && username === cleanNote) ||
+                cleanNote.includes(email) ||
+                cleanNote.includes(u.id)
+              );
+            }) || null;
+        }
+
+        if (associatedUser) {
+          await admin
+            .from('application_users')
+            .update({ last_login_at: loginTimestamp, updated_at: loginTimestamp })
+            .eq('id', associatedUser.id);
+        }
+
+        // Check for duplicate rapid retry (< 1.5 seconds) to prevent duplicate log insertion
+        const isRapidRetry =
+          associatedUser?.last_login_at &&
+          now.getTime() - new Date(associatedUser.last_login_at).getTime() < 1500;
+
+        if (!isRapidRetry) {
+          await admin.from('application_logs').insert({
+            application_id: app.id,
+            event: 'license.validated',
+            metadata: {
+              licenseId: license.id,
+              subscription: license.subscription,
+              hwid: hwid ? `${hwid.slice(0, 4)}...` : null,
+              userId: associatedUser ? associatedUser.id : null,
+              email: associatedUser ? associatedUser.email : null
+            }
+          });
+        }
 
         return NextResponse.json({
           valid: true,
@@ -328,6 +515,14 @@ export async function POST(request: Request) {
             allowed_devices: license.allowed_devices,
             used_devices: usedDevices
           },
+          user: associatedUser
+            ? {
+                id: associatedUser.id,
+                email: associatedUser.email,
+                username: associatedUser.username,
+                last_login_at: loginTimestamp
+              }
+            : null,
           application: {
             id: app.id,
             name: app.name,

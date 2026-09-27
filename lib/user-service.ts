@@ -24,6 +24,12 @@ export interface UserLicenseData {
   note: string | null;
 }
 
+export interface UserLoginRecord {
+  timestamp: string;
+  formatted_time: string;
+  event: string;
+}
+
 export interface UserActivityData {
   last_login_at: string | null;
   formatted_last_login: string;
@@ -31,6 +37,7 @@ export interface UserActivityData {
   formatted_last_activity: string;
   login_count: number | null;
   auth_count: number | null;
+  login_history: UserLoginRecord[];
 }
 
 export interface EnrichedUser {
@@ -70,29 +77,26 @@ export function maskLicenseKey(key: string | null | undefined): string {
 }
 
 /**
- * Reliable server-side date formatting (e.g. "26 Oct 2026")
+ * Reliable server-side date formatting (e.g. "27 Sep 2026" or "27 Sep 2026, 11:30")
  */
 export function formatDateReliable(isoDate: string | null | undefined, includeTime = false): string {
   if (!isoDate) return 'Never';
   try {
     const d = new Date(isoDate);
     if (isNaN(d.getTime())) return 'Invalid Date';
-    
-    const formatted = d.toLocaleDateString('en-GB', {
-      day: 'numeric',
-      month: 'short',
-      year: 'numeric'
-    });
-    
+
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const day = d.getDate();
+    const month = months[d.getMonth()];
+    const year = d.getFullYear();
+    const formatted = `${day} ${month} ${year}`;
+
     if (includeTime) {
-      const time = d.toLocaleTimeString('en-GB', {
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: false
-      });
-      return `${formatted}, ${time}`;
+      const hours = String(d.getHours()).padStart(2, '0');
+      const minutes = String(d.getMinutes()).padStart(2, '0');
+      return `${formatted}, ${hours}:${minutes}`;
     }
-    
+
     return formatted;
   } catch {
     return 'Invalid Date';
@@ -210,12 +214,15 @@ export function enrichUsersWithData(
     let loginCount = 0;
     let authCount = 0;
     let latestActivityTimestamp: string | null = user.last_login_at;
+    const loginHistory: UserLoginRecord[] = [];
 
     logs.forEach((log) => {
       const meta = log.metadata || {};
       const metaUserId = meta.userId || meta.user_id;
       const metaEmail = meta.email ? String(meta.email).toLowerCase().trim() : null;
-      const matchesUser = metaUserId === userId || (metaEmail && metaEmail === cleanEmail);
+      const metaLicenseId = meta.licenseId || meta.license_id;
+      const matchesLicense = Boolean(matchedLicense && metaLicenseId && metaLicenseId === matchedLicense.id);
+      const matchesUser = metaUserId === userId || (metaEmail && metaEmail === cleanEmail) || matchesLicense;
 
       if (matchesUser) {
         if (!latestActivityTimestamp || new Date(log.created_at) > new Date(latestActivityTimestamp)) {
@@ -225,8 +232,19 @@ export function enrichUsersWithData(
         if (log.event === 'user.login_success' || log.event === 'user_authentication') {
           loginCount++;
           authCount++;
+          loginHistory.push({
+            timestamp: log.created_at,
+            formatted_time: formatDateReliable(log.created_at, true),
+            event: 'User Login'
+          });
         } else if (log.event === 'license.validated' || log.event === 'auth.validate') {
+          loginCount++;
           authCount++;
+          loginHistory.push({
+            timestamp: log.created_at,
+            formatted_time: formatDateReliable(log.created_at, true),
+            event: 'License Validation'
+          });
         }
 
         if (log.event === 'user.created' && !userCreationMetadata) {
@@ -234,6 +252,17 @@ export function enrichUsersWithData(
         }
       }
     });
+
+    // If user has a valid last_login_at but logs didn't contain an entry, include it
+    if (user.last_login_at && loginHistory.length === 0) {
+      loginHistory.push({
+        timestamp: user.last_login_at,
+        formatted_time: formatDateReliable(user.last_login_at, true),
+        event: 'Recorded Login'
+      });
+    }
+
+    loginHistory.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 
     // 3. Assemble License Data
     let licenseData: UserLicenseData | null = null;
@@ -331,7 +360,8 @@ export function enrichUsersWithData(
         last_activity_at: latestActivityTimestamp,
         formatted_last_activity: latestActivityTimestamp ? formatDateReliable(latestActivityTimestamp, true) : 'Never',
         login_count: loginCount > 0 ? loginCount : (user.last_login_at ? 1 : 0),
-        auth_count: authCount > 0 ? authCount : (user.last_login_at ? 1 : 0)
+        auth_count: authCount > 0 ? authCount : (user.last_login_at ? 1 : 0),
+        login_history: loginHistory
       }
     };
   });

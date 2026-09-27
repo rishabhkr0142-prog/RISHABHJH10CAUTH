@@ -109,8 +109,15 @@ export async function GET(request: Request) {
     .from('application_logs')
     .select('event, application_id, metadata, created_at')
     .in('application_id', targetAppIds)
+    .in('event', [
+      'user.login_success',
+      'user_authentication',
+      'license.validated',
+      'auth.validate',
+      'user.created'
+    ])
     .order('created_at', { ascending: false })
-    .limit(200);
+    .limit(2000);
 
   // 5. Enrich users with license details, device usage, and activity statistics
   const usersList = (rawUsers || []) as EndUser[];

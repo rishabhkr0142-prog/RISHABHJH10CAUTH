@@ -2245,8 +2245,14 @@ NOTIFY pgrst, 'reload schema';`, 'sql_migration')}
                 </span>
                 <span className="text-[#aaaaaa]">
                   {selectedUser.last_login_at
-                    ? new Date(selectedUser.last_login_at).toLocaleString()
-                    : 'No recorded logins'}
+                    ? new Date(selectedUser.last_login_at).toLocaleDateString('en-GB', {
+                        day: 'numeric',
+                        month: 'short',
+                        year: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit'
+                      })
+                    : 'Never logged in'}
                 </span>
               </div>
             </div>

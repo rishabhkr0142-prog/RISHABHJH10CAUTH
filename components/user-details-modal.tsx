@@ -398,6 +398,41 @@ export default function UserDetailsModal({
                 </div>
               </div>
             </div>
+
+            {/* LOGIN HISTORY */}
+            <div className="space-y-2 pt-2 border-t border-[#242424]">
+              <span className="text-[#727275] font-semibold block text-[11px] uppercase tracking-wider">
+                Login History
+              </span>
+              {activity.login_history && activity.login_history.length > 0 ? (
+                <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                  {activity.login_history.map((record, idx) => (
+                    <div
+                      key={idx}
+                      className="flex items-center justify-between p-2 rounded-lg bg-[#111111] border border-[#222222] text-xs"
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                        <span className="text-white font-medium">{record.event}</span>
+                      </div>
+                      <span className="text-[#888888] font-mono text-[11px]">{record.formatted_time}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : activity.last_login_at ? (
+                <div className="p-2 rounded-lg bg-[#111111] border border-[#222222] text-xs flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                    <span className="text-white font-medium">Last Login</span>
+                  </div>
+                  <span className="text-[#888888] font-mono text-[11px]">{activity.formatted_last_login}</span>
+                </div>
+              ) : (
+                <div className="p-2 rounded-lg bg-[#111111] border border-[#222222] text-xs text-[#666666]">
+                  No recorded logins
+                </div>
+              )}
+            </div>
           </div>
         </div>
 

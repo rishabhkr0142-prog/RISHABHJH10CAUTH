@@ -6,7 +6,7 @@ import { copyToClipboardSafe } from '@/lib/clipboard';
 import CreateUserModal from '@/components/create-user-modal';
 import UserDetailsModal from '@/components/user-details-modal';
 import ResetHwidModal from '@/components/reset-hwid-modal';
-import type { EnrichedUser } from '@/lib/user-service';
+import { formatDateReliable, type EnrichedUser } from '@/lib/user-service';
 import { AVAILABLE_SUBSCRIPTIONS } from '@/lib/subscriptions';
 import {
   Users,
@@ -781,12 +781,12 @@ export default function UsersPage() {
                         <div className="space-y-0.5">
                           <div className="text-xs text-[#dcdcdc] flex items-center gap-1">
                             <span className="text-[#666666]">Login:</span>
-                            <span className="truncate max-w-[120px]" title={activity.formatted_last_login}>
-                              {user.last_login_at ? user.last_login_at.split('T')[0] : 'Never'}
+                            <span className="truncate max-w-[130px]" title={activity.formatted_last_login}>
+                              {user.last_login_at ? formatDateReliable(user.last_login_at) : 'Never'}
                             </span>
                           </div>
                           <div className="text-[11px] text-[#727275]">
-                            Created: {user.created_at ? user.created_at.split('T')[0] : '—'}
+                            Logins: {activity.login_count !== null ? activity.login_count : (user.last_login_at ? 1 : 0)}
                           </div>
                         </div>
                       </td>
