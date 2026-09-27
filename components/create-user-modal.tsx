@@ -3,7 +3,6 @@
 import { useState, useEffect } from 'react';
 import { Users, AlertCircle, Eye, EyeOff, Check, Copy } from 'lucide-react';
 import { copyToClipboardSafe } from '@/lib/clipboard';
-import { AVAILABLE_SUBSCRIPTIONS } from '@/lib/subscriptions';
 
 export interface ApplicationOption {
   id: string;
@@ -33,11 +32,7 @@ export default function CreateUserModal({
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [email, setEmail] = useState('');
-  const [subscription, setSubscription] = useState('default');
-  const [expiry, setExpiry] = useState('');
-  const [hwidLocked, setHwidLocked] = useState(false);
   const [generateToken, setGenerateToken] = useState(false);
-  const [allowedDevices, setAllowedDevices] = useState('1');
 
   // UI States
   const [showPassword, setShowPassword] = useState(false);
@@ -45,26 +40,6 @@ export default function CreateUserModal({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [generatedToken, setGeneratedToken] = useState<string | null>(null);
   const [copiedToken, setCopiedToken] = useState(false);
-
-  // Helper to compute ISO string for datetime-local input
-  function getFutureDateTime(hoursToAdd: number): string {
-    const d = new Date();
-    d.setHours(d.getHours() + hoursToAdd);
-    // Pad to YYYY-MM-DDTHH:mm
-    const year = d.getFullYear();
-    const month = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    const hours = String(d.getHours()).padStart(2, '0');
-    const minutes = String(d.getMinutes()).padStart(2, '0');
-    return `${year}-${month}-${day}T${hours}:${minutes}`;
-  }
-
-  // Set default expiry to 30 days initially
-  useEffect(() => {
-    if (isOpen && !expiry) {
-      setExpiry(getFutureDateTime(24 * 30));
-    }
-  }, [isOpen]);
 
   // Load applications if not provided or empty
   useEffect(() => {
@@ -93,27 +68,6 @@ export default function CreateUserModal({
       setTargetAppId(selectedApplicationId);
     }
   }, [selectedApplicationId]);
-
-  // Expiry quick duration pills
-  function handleQuickExpiry(type: '1H' | '1D' | '7D' | '1MO' | '1Y') {
-    switch (type) {
-      case '1H':
-        setExpiry(getFutureDateTime(1));
-        break;
-      case '1D':
-        setExpiry(getFutureDateTime(24));
-        break;
-      case '7D':
-        setExpiry(getFutureDateTime(24 * 7));
-        break;
-      case '1MO':
-        setExpiry(getFutureDateTime(24 * 30));
-        break;
-      case '1Y':
-        setExpiry(getFutureDateTime(24 * 365));
-        break;
-    }
-  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -150,11 +104,7 @@ export default function CreateUserModal({
           username: username.trim(),
           email: safeEmail,
           password: password,
-          subscription,
-          expiry,
-          hwid_locked: hwidLocked,
-          generate_token: generateToken,
-          allowed_devices: parseInt(allowedDevices, 10) || 1
+          generate_token: generateToken
         })
       });
 
@@ -184,11 +134,7 @@ export default function CreateUserModal({
     setUsername('');
     setPassword('');
     setEmail('');
-    setSubscription('default');
-    setExpiry('');
-    setHwidLocked(false);
     setGenerateToken(false);
-    setAllowedDevices('1');
     setErrorMessage(null);
     setGeneratedToken(null);
   }
@@ -343,63 +289,9 @@ export default function CreateUserModal({
               />
             </div>
 
-            {/* SUBSCRIPTION * */}
-            <div>
-              <label className="block text-xs font-semibold text-[#888888] uppercase tracking-wider mb-1">
-                SUBSCRIPTION *
-              </label>
-              <select
-                value={subscription}
-                onChange={(e) => setSubscription(e.target.value)}
-                required
-                className="w-full px-3 py-2 rounded-xl bg-[#111111] border border-[#282828] text-xs text-white focus:outline-none focus:border-[#ff5f15]/50 transition-colors cursor-pointer"
-              >
-                {AVAILABLE_SUBSCRIPTIONS.map((tier) => (
-                  <option key={tier.id} value={tier.id}>
-                    {tier.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {/* EXPIRY * with quick pills */}
-            <div>
-              <label className="block text-xs font-semibold text-[#888888] uppercase tracking-wider mb-1">
-                EXPIRY *
-              </label>
-              <input
-                type="datetime-local"
-                value={expiry}
-                onChange={(e) => setExpiry(e.target.value)}
-                required
-                className="w-full px-3 py-2 rounded-xl bg-[#111111] border border-[#282828] text-xs text-white focus:outline-none focus:border-[#ff5f15]/50 transition-colors"
-              />
-              <div className="flex items-center gap-1.5 mt-1.5">
-                {(['1D', '1H', '7D', '1MO', '1Y'] as const).map((pill) => (
-                  <button
-                    key={pill}
-                    type="button"
-                    onClick={() => handleQuickExpiry(pill)}
-                    className="flex-1 py-1 rounded-lg bg-[#1f1f1f] hover:bg-[#282828] border border-[#282828] text-[10px] font-mono text-[#aaaaaa] hover:text-white transition-colors cursor-pointer"
-                  >
-                    {pill}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Checkboxes */}
-            <div className="space-y-2 pt-1 border-t border-[#222222]">
-              <label className="flex items-center justify-between cursor-pointer py-0.5">
-                <span className="text-xs text-[#cccccc]">HWID Affected (Lock to Device)</span>
-                <input
-                  type="checkbox"
-                  checked={hwidLocked}
-                  onChange={(e) => setHwidLocked(e.target.checked)}
-                  className="h-4 w-4 rounded bg-[#111111] border-[#333333] text-[#ff5f15] focus:ring-0 focus:ring-offset-0 cursor-pointer accent-[#ff5f15]"
-                />
-              </label>
-              <label className="flex items-center justify-between cursor-pointer py-0.5">
+            {/* Checkbox: Generate Token */}
+            <div className="pt-1 border-t border-[#222222]">
+              <label className="flex items-center justify-between cursor-pointer py-1">
                 <span className="text-xs text-[#cccccc]">Generate Token for this User</span>
                 <input
                   type="checkbox"
@@ -408,25 +300,6 @@ export default function CreateUserModal({
                   className="h-4 w-4 rounded bg-[#111111] border-[#333333] text-[#ff5f15] focus:ring-0 focus:ring-offset-0 cursor-pointer accent-[#ff5f15]"
                 />
               </label>
-            </div>
-
-            {/* Allowed Devices (Multi-HWID) */}
-            <div>
-              <label className="block text-xs font-semibold text-[#888888] uppercase tracking-wider mb-1">
-                Allowed Devices (Multi-HWID)
-              </label>
-              <select
-                value={allowedDevices}
-                onChange={(e) => setAllowedDevices(e.target.value)}
-                className="w-full px-3 py-2 rounded-xl bg-[#111111] border border-[#282828] text-xs text-white focus:outline-none focus:border-[#ff5f15]/50 transition-colors cursor-pointer"
-              >
-                <option value="1">1 Device (Default)</option>
-                <option value="2">2 Devices</option>
-                <option value="3">3 Devices</option>
-                <option value="5">5 Devices</option>
-                <option value="10">10 Devices</option>
-                <option value="unlimited">Unlimited Devices</option>
-              </select>
             </div>
 
             {/* Actions */}

@@ -89,7 +89,7 @@ export async function POST(
 
   try {
     const body = await request.json();
-    let { email, username, password, status = 'active', generate_token, subscription, expiry, hwid_locked, allowed_devices } = body;
+    let { email, username, password, status = 'active', generate_token } = body;
 
     if (!username && !email) {
       return NextResponse.json(
@@ -208,10 +208,6 @@ export async function POST(
         email: newUser.email,
         username: newUser.username,
         status: newUser.status,
-        subscription: subscription || 'default',
-        expiry: expiry || null,
-        hwid_locked: !!hwid_locked,
-        allowed_devices: allowed_devices || 1,
         token_generated: !!token
       }
     });

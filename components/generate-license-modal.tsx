@@ -49,6 +49,8 @@ export default function GenerateLicenseModal({
   const [numbers, setNumbers] = useState(true);
   const [note, setNote] = useState('');
   const [allowedDevices, setAllowedDevices] = useState('1');
+  const [appUsers, setAppUsers] = useState<{ id: string; email: string; username: string | null }[]>([]);
+  const [selectedUserEmail, setSelectedUserEmail] = useState('');
 
   // Submission & Result state
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -77,11 +79,29 @@ export default function GenerateLicenseModal({
       setErrorMessage(null);
       setCopiedAll(false);
       setCopiedKeyIndex(null);
+      setNote('');
+      setSelectedUserEmail('');
       if (selectedApplicationId) {
         setAppId(selectedApplicationId);
       }
     }
   }, [isOpen, selectedApplicationId]);
+
+  // Load users for target application to support explicit user-license assignment
+  useEffect(() => {
+    if (isOpen && appId) {
+      fetch(`/api/applications/${appId}/users`)
+        .then((res) => res.json())
+        .then((data) => {
+          if (Array.isArray(data.users)) {
+            setAppUsers(data.users);
+          } else {
+            setAppUsers([]);
+          }
+        })
+        .catch(() => setAppUsers([]));
+    }
+  }, [isOpen, appId]);
 
   if (!isOpen) return null;
 
@@ -543,19 +563,44 @@ export default function GenerateLicenseModal({
                   </p>
                 </div>
 
-                {/* Note */}
+                {/* Note / User Assignment */}
                 <div>
                   <label className="block text-xs font-semibold text-[#888888] uppercase tracking-wider mb-1.5">
-                    Note (Optional)
+                    Assign to User / Note (Optional)
                   </label>
+                  {appUsers.length > 0 && (
+                    <select
+                      value={selectedUserEmail}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setSelectedUserEmail(val);
+                        if (val) setNote(val);
+                      }}
+                      className="w-full px-3.5 py-2 mb-2 rounded-xl bg-[#111111] border border-[#282828] text-xs text-white focus:outline-none focus:border-[#ff5f15]/50 transition-colors cursor-pointer"
+                    >
+                      <option value="">-- Choose User to Assign (Optional) --</option>
+                      {appUsers.map((u) => (
+                        <option key={u.id} value={u.email}>
+                          {u.email} {u.username ? `(@${u.username})` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  )}
                   <input
                     type="text"
                     value={note}
-                    onChange={(e) => setNote(e.target.value)}
-                    placeholder="e.g. Order #1024 or Discord promo"
+                    onChange={(e) => {
+                      setNote(e.target.value);
+                      if (selectedUserEmail && e.target.value !== selectedUserEmail) {
+                        setSelectedUserEmail('');
+                      }
+                    }}
+                    placeholder="User email or note description"
                     className="w-full px-3.5 py-2.5 rounded-xl bg-[#111111] border border-[#282828] text-xs text-white placeholder-[#555555] focus:outline-none focus:border-[#ff5f15]/50 transition-colors"
                   />
-                  <p className="mt-1 text-[11px] text-[#666666]">Stored alongside the license.</p>
+                  <p className="mt-1 text-[11px] text-[#666666]">
+                    Set user email to link license to account, or enter custom note.
+                  </p>
                 </div>
               </div>
 

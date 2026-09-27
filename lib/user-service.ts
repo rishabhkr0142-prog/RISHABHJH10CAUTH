@@ -303,37 +303,6 @@ export function enrichUsersWithData(
         created_at: matchedLicense.created_at,
         note: matchedLicense.note
       };
-    } else if (userCreationMetadata?.subscription || userCreationMetadata?.expiry) {
-      // Fallback from user creation event metadata if a standalone license row wasn't created yet
-      const expiry = userCreationMetadata.expiry || null;
-      const expiryInfo = calculateExpiryData(expiry);
-      const sub = userCreationMetadata.subscription || 'default';
-      const subInfo = getSubscriptionDetails(sub);
-      const allowed = userCreationMetadata.allowed_devices || 1;
-      const isUnlimited = allowed >= 999;
-
-      licenseData = {
-        id: null,
-        license_key_masked: 'No License Key',
-        subscription: sub,
-        subscription_name: subInfo.name,
-        subscription_badge_color: subInfo.badgeColor,
-        status: expiryInfo.isExpired ? 'expired' : 'active',
-        allowed_devices: allowed,
-        used_devices: 0,
-        remaining_devices: isUnlimited ? null : allowed,
-        is_unlimited_devices: isUnlimited,
-        device_hwids: [],
-        expires_at: expiry,
-        formatted_expiry: expiryInfo.formattedExpiry,
-        days_remaining: expiryInfo.daysRemaining,
-        days_remaining_text: expiryInfo.daysRemainingText,
-        is_expired: expiryInfo.isExpired,
-        is_expiring_soon: expiryInfo.isExpiringSoon,
-        expiry_tag: expiryInfo.expiryTag,
-        created_at: user.created_at,
-        note: null
-      };
     }
 
     return {

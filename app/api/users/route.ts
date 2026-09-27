@@ -2,7 +2,6 @@ import { NextResponse } from 'next/server';
 import { getOwnerUser, logApplicationEvent } from '@/lib/supabase/auth';
 import { createClient } from '@/lib/supabase/server';
 import { hashUserPassword } from '@/lib/crypto';
-import { generateUniqueLicenses } from '@/lib/license-generator';
 import { AVAILABLE_SUBSCRIPTIONS } from '@/lib/subscriptions';
 import { enrichUsersWithData } from '@/lib/user-service';
 import type { Database, EndUser, License, Application } from '@/lib/supabase/types';
@@ -191,11 +190,7 @@ export async function POST(request: Request) {
       username,
       password,
       status = 'active',
-      generate_token,
-      subscription,
-      expiry,
-      hwid_locked,
-      allowed_devices
+      generate_token
     } = body;
 
     if (!applicationId) {
@@ -297,49 +292,6 @@ export async function POST(request: Request) {
       );
     }
 
-    // Auto-generate license if subscription or device settings were specified
-    let generatedLicenseKey: string | null = null;
-    let licenseId: string | null = null;
-    try {
-      const { data: existingLicRows } = await supabase.from('licenses').select('license_key');
-      const existingKeySet = new Set((existingLicRows || []).map((l) => l.license_key));
-
-      const [newKey] = generateUniqueLicenses({
-        mask: 'JH10C-XXXX-XXXX',
-        amount: 1,
-        charSets: { uppercase: true, numbers: true },
-        existingKeys: existingKeySet
-      });
-
-      const parsedDevices =
-        allowed_devices === 'unlimited' ? 9999 : Math.max(1, parseInt(allowed_devices, 10) || 1);
-
-      const expiresAtIso = expiry ? new Date(expiry).toISOString() : null;
-
-      const { data: createdLic } = await supabase
-        .from('licenses')
-        .insert({
-          application_id: applicationId,
-          license_key: newKey,
-          subscription: subscription || 'default',
-          status: 'active',
-          allowed_devices: parsedDevices,
-          used_devices: 0,
-          device_hwids: [],
-          note: newUser.email,
-          expires_at: expiresAtIso
-        })
-        .select()
-        .single();
-
-      if (createdLic) {
-        generatedLicenseKey = createdLic.license_key;
-        licenseId = createdLic.id;
-      }
-    } catch (licErr) {
-      console.warn('[API Users POST] Standalone license auto-creation skipped:', licErr);
-    }
-
     let token: string | null = null;
     if (generate_token) {
       const crypto = await import('crypto');
@@ -354,12 +306,6 @@ export async function POST(request: Request) {
         email: newUser.email,
         username: newUser.username,
         status: newUser.status,
-        subscription: subscription || 'default',
-        expiry: expiry || null,
-        hwid_locked: !!hwid_locked,
-        allowed_devices: allowed_devices || 1,
-        licenseId: licenseId || null,
-        licenseKey: generatedLicenseKey ? `${generatedLicenseKey.slice(-4)}` : null,
         token_generated: !!token
       }
     });
@@ -370,8 +316,7 @@ export async function POST(request: Request) {
           ...newUser,
           application: { id: app.id, name: app.name }
         },
-        token,
-        licenseKey: generatedLicenseKey
+        token
       },
       { status: 201 }
     );

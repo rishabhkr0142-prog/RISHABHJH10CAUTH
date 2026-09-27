@@ -680,6 +680,13 @@ export default function LicensesPage() {
         onRevokeClick={(lic) => setActiveRevokeLicense(lic)}
         onDeleteClick={(lic) => setActiveDeleteLicense(lic)}
         onResetHwidClick={(lic) => setActiveResetHwidLicense(lic)}
+        onLicenseUpdated={(updatedLic) => {
+          setActiveDetailsLicense(updatedLic);
+          setLicenses((prev) =>
+            prev.map((l) => (l.id === updatedLic.id ? { ...l, note: updatedLic.note } : l))
+          );
+          showToast('License assignment updated successfully.');
+        }}
       />
 
       <RevokeLicenseModal

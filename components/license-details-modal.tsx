@@ -50,6 +50,7 @@ interface LicenseDetailsModalProps {
   onRevokeClick?: (license: LicenseDetailData) => void;
   onDeleteClick?: (license: LicenseDetailData) => void;
   onResetHwidClick?: (license: LicenseDetailData) => void;
+  onLicenseUpdated?: (license: LicenseDetailData) => void;
 }
 
 export default function LicenseDetailsModal({
@@ -58,9 +59,14 @@ export default function LicenseDetailsModal({
   license,
   onRevokeClick,
   onDeleteClick,
-  onResetHwidClick
+  onResetHwidClick,
+  onLicenseUpdated
 }: LicenseDetailsModalProps) {
   const [copiedKey, setCopiedKey] = useState(false);
+  const [isEditingNote, setIsEditingNote] = useState(false);
+  const [noteText, setNoteText] = useState('');
+  const [isSavingNote, setIsSavingNote] = useState(false);
+  const [saveNoteError, setSaveNoteError] = useState<string | null>(null);
 
   if (!isOpen || !license) return null;
 
@@ -70,6 +76,35 @@ export default function LicenseDetailsModal({
     if (ok) {
       setCopiedKey(true);
       setTimeout(() => setCopiedKey(false), 2000);
+    }
+  }
+
+  async function handleSaveNote() {
+    if (!license) return;
+    setIsSavingNote(true);
+    setSaveNoteError(null);
+    try {
+      const res = await fetch(`/api/licenses/${license.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ note: noteText.trim() || null })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to update license assignment');
+      }
+      const updated: LicenseDetailData = {
+        ...license,
+        note: noteText.trim() || null
+      };
+      setIsEditingNote(false);
+      if (onLicenseUpdated) {
+        onLicenseUpdated(updated);
+      }
+    } catch (err: any) {
+      setSaveNoteError(err.message || 'Error updating license assignment');
+    } finally {
+      setIsSavingNote(false);
     }
   }
 
@@ -248,14 +283,72 @@ export default function LicenseDetailsModal({
             </div>
           </div>
 
-          {/* Note */}
-          <div className="p-3.5 rounded-xl bg-[#121212] border border-[#242424]">
-            <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#777777]">
-              Note
-            </span>
-            <p className="mt-1 text-xs text-zinc-300 italic">
-              {license.note || 'No note attached.'}
-            </p>
+          {/* Note / User Assignment */}
+          <div className="p-3.5 rounded-xl bg-[#121212] border border-[#242424] space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#777777]">
+                Assigned User / Note
+              </span>
+              {!isEditingNote && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNoteText(license.note || '');
+                    setSaveNoteError(null);
+                    setIsEditingNote(true);
+                  }}
+                  className="text-[11px] text-[#ff5f15] hover:text-[#e0500e] font-medium transition-colors cursor-pointer"
+                >
+                  {license.note ? 'Edit / Reassign' : 'Assign to User'}
+                </button>
+              )}
+            </div>
+
+            {isEditingNote ? (
+              <div className="space-y-2 pt-1">
+                {saveNoteError && (
+                  <p className="text-[11px] text-red-400">{saveNoteError}</p>
+                )}
+                <input
+                  type="text"
+                  value={noteText}
+                  onChange={(e) => setNoteText(e.target.value)}
+                  placeholder="Enter user email to assign (or custom note)"
+                  className="w-full px-3 py-1.5 rounded-lg bg-[#181818] border border-[#333333] text-xs text-white placeholder-[#555555] focus:outline-none focus:border-[#ff5f15]/50 font-mono"
+                />
+                <p className="text-[10px] text-[#666666]">
+                  Setting this to a user's email links the license to that user account.
+                </p>
+                <div className="flex items-center justify-end gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsEditingNote(false);
+                      setSaveNoteError(null);
+                    }}
+                    className="px-2.5 py-1 rounded bg-[#202020] hover:bg-[#282828] text-[11px] text-[#888888] hover:text-white transition-colors cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isSavingNote}
+                    onClick={handleSaveNote}
+                    className="px-3 py-1 rounded bg-[#ff5f15] hover:bg-[#e0500e] text-[11px] font-semibold text-white transition-colors cursor-pointer disabled:opacity-50"
+                  >
+                    {isSavingNote ? 'Saving...' : 'Save Assignment'}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <p className="text-xs text-zinc-300 italic">
+                {license.note ? (
+                  <span className="text-white font-mono not-italic">{license.note}</span>
+                ) : (
+                  'No user assigned / No note attached.'
+                )}
+              </p>
+            )}
           </div>
 
           {/* Safe HWID / Devices Section */}
