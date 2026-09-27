@@ -125,7 +125,22 @@ export async function PATCH(
     updated_at: new Date().toISOString()
   };
 
-  if (body.action === 'revoke' || body.status === 'revoked') {
+  if (body.action === 'reset_hwid' || body.action === 'reset-hwid') {
+    if (license.status === 'revoked') {
+      return NextResponse.json(
+        { error: 'Cannot reset HWID on a revoked license' },
+        { status: 400 }
+      );
+    }
+    const currentHwids = license.device_hwids || [];
+    if (body.hwid && typeof body.hwid === 'string' && body.hwid.trim()) {
+      updateData.device_hwids = currentHwids.filter((h) => h !== body.hwid.trim());
+      updateData.used_devices = updateData.device_hwids.length;
+    } else {
+      updateData.device_hwids = [];
+      updateData.used_devices = 0;
+    }
+  } else if (body.action === 'revoke' || body.status === 'revoked') {
     updateData.status = 'revoked';
     updateData.revoked_at = new Date().toISOString();
   }
@@ -145,7 +160,20 @@ export async function PATCH(
     return NextResponse.json({ error: updateErr.message }, { status: 500 });
   }
 
-  if (updateData.status === 'revoked') {
+  if (body.action === 'reset_hwid' || body.action === 'reset-hwid') {
+    await logApplicationEvent({
+      applicationId: license.application_id,
+      event: 'HWID_RESET',
+      metadata: {
+        action: 'HWID_RESET',
+        targetType: 'license',
+        licenseId: id,
+        licenseKeySuffix: license.license_key.slice(-4),
+        previousDeviceCount: (license.device_hwids || []).length,
+        newDeviceCount: updateData.device_hwids?.length || 0
+      }
+    });
+  } else if (updateData.status === 'revoked') {
     await logApplicationEvent({
       applicationId: license.application_id,
       event: 'license.revoked',
@@ -155,7 +183,12 @@ export async function PATCH(
 
   return NextResponse.json({
     success: true,
-    message: updateData.status === 'revoked' ? 'License has been revoked' : 'License updated',
+    message:
+      body.action === 'reset_hwid' || body.action === 'reset-hwid'
+        ? 'HWID binding reset successfully'
+        : updateData.status === 'revoked'
+        ? 'License has been revoked'
+        : 'License updated',
     license: updated
   });
 }

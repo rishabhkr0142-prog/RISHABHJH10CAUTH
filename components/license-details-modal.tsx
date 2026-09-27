@@ -18,7 +18,8 @@ import {
   ShieldCheck,
   CheckCircle2,
   XCircle,
-  AlertCircle
+  AlertCircle,
+  RotateCcw
 } from 'lucide-react';
 
 export interface LicenseDetailData {
@@ -48,6 +49,7 @@ interface LicenseDetailsModalProps {
   license: LicenseDetailData | null;
   onRevokeClick?: (license: LicenseDetailData) => void;
   onDeleteClick?: (license: LicenseDetailData) => void;
+  onResetHwidClick?: (license: LicenseDetailData) => void;
 }
 
 export default function LicenseDetailsModal({
@@ -55,7 +57,8 @@ export default function LicenseDetailsModal({
   onClose,
   license,
   onRevokeClick,
-  onDeleteClick
+  onDeleteClick,
+  onResetHwidClick
 }: LicenseDetailsModalProps) {
   const [copiedKey, setCopiedKey] = useState(false);
 
@@ -293,6 +296,21 @@ export default function LicenseDetailsModal({
         {/* Modal Footer */}
         <div className="p-5 border-t border-[#242424] bg-[#121212]/80 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2">
+            {license.status !== 'revoked' && onResetHwidClick && (
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onResetHwidClick(license);
+                }}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-orange-500/10 hover:bg-orange-500/20 text-orange-400 border border-orange-500/30 text-xs font-semibold transition-colors cursor-pointer"
+                title="Reset HWID / Device Binding"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                <span>Reset HWID</span>
+              </button>
+            )}
+
             {license.status !== 'revoked' && onRevokeClick && (
               <button
                 type="button"

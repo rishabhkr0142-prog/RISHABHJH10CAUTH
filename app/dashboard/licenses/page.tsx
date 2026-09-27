@@ -8,6 +8,8 @@ import GenerateLicenseModal from '@/components/generate-license-modal';
 import LicenseDetailsModal, { type LicenseDetailData } from '@/components/license-details-modal';
 import RevokeLicenseModal from '@/components/revoke-license-modal';
 import DeleteLicenseModal from '@/components/delete-license-modal';
+import ResetHwidModal from '@/components/reset-hwid-modal';
+import { maskLicenseKey } from '@/lib/user-service';
 import {
   KeyRound,
   Search,
@@ -28,7 +30,8 @@ import {
   ChevronRight,
   ExternalLink,
   ShieldCheck,
-  CheckCircle2
+  CheckCircle2,
+  RotateCcw
 } from 'lucide-react';
 
 interface Application {
@@ -59,6 +62,7 @@ export default function LicensesPage() {
   const [activeDetailsLicense, setActiveDetailsLicense] = useState<LicenseDetailData | null>(null);
   const [activeRevokeLicense, setActiveRevokeLicense] = useState<LicenseDetailData | null>(null);
   const [activeDeleteLicense, setActiveDeleteLicense] = useState<LicenseDetailData | null>(null);
+  const [activeResetHwidLicense, setActiveResetHwidLicense] = useState<LicenseDetailData | null>(null);
 
   // Inline copy state for license key
   const [copiedKeyId, setCopiedKeyId] = useState<string | null>(null);
@@ -564,6 +568,19 @@ export default function LicensesPage() {
                             <span className="hidden sm:inline">Details</span>
                           </button>
 
+                          {/* Reset HWID */}
+                          {lic.status !== 'revoked' ? (
+                            <button
+                              type="button"
+                              onClick={() => setActiveResetHwidLicense(lic)}
+                              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-orange-500/10 hover:bg-orange-500/20 border border-orange-500/30 text-xs font-medium text-orange-400 transition-colors cursor-pointer"
+                              title="Reset HWID / Device Binding"
+                            >
+                              <RotateCcw className="h-3.5 w-3.5" />
+                              <span className="hidden sm:inline">Reset HWID</span>
+                            </button>
+                          ) : null}
+
                           {/* Revoke */}
                           {lic.status !== 'revoked' ? (
                             <button
@@ -662,6 +679,7 @@ export default function LicensesPage() {
         license={activeDetailsLicense}
         onRevokeClick={(lic) => setActiveRevokeLicense(lic)}
         onDeleteClick={(lic) => setActiveDeleteLicense(lic)}
+        onResetHwidClick={(lic) => setActiveResetHwidLicense(lic)}
       />
 
       <RevokeLicenseModal
@@ -676,6 +694,47 @@ export default function LicensesPage() {
         onClose={() => setActiveDeleteLicense(null)}
         license={activeDeleteLicense}
         onDeleted={handleLicenseDeleted}
+      />
+
+      <ResetHwidModal
+        isOpen={Boolean(activeResetHwidLicense)}
+        onClose={() => setActiveResetHwidLicense(null)}
+        onSuccess={() => {
+          fetchLicenses(currentPage);
+          showToast('HWID binding was successfully reset. The license can bind to a new device.');
+          if (activeDetailsLicense && activeResetHwidLicense && activeDetailsLicense.id === activeResetHwidLicense.id) {
+            setActiveDetailsLicense((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    device_hwids: [],
+                    used_devices: 0
+                  }
+                : null
+            );
+          }
+        }}
+        target={
+          activeResetHwidLicense
+            ? {
+                type: 'license',
+                id: activeResetHwidLicense.id,
+                applicationId: activeResetHwidLicense.application_id,
+                applicationName: activeResetHwidLicense.application?.name || 'Application',
+                userIdentifier: activeResetHwidLicense.note || 'Standalone License',
+                maskedLicenseKey: maskLicenseKey(activeResetHwidLicense.license_key),
+                isBound: Boolean(
+                  (activeResetHwidLicense.device_hwids && activeResetHwidLicense.device_hwids.length > 0) ||
+                    activeResetHwidLicense.used_devices > 0
+                ),
+                boundDeviceCount:
+                  activeResetHwidLicense.used_devices ||
+                  activeResetHwidLicense.device_hwids?.length ||
+                  0,
+                allowedDevices: activeResetHwidLicense.allowed_devices
+              }
+            : null
+        }
       />
     </div>
   );

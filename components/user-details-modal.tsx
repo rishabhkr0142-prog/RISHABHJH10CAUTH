@@ -22,7 +22,8 @@ import {
   X,
   ExternalLink,
   Smartphone,
-  Sparkles
+  Sparkles,
+  RotateCcw
 } from 'lucide-react';
 
 interface UserDetailsModalProps {
@@ -32,6 +33,7 @@ interface UserDetailsModalProps {
   onToggleStatus?: (user: EnrichedUser) => void;
   onOpenResetPassword?: (user: EnrichedUser) => void;
   onOpenDelete?: (user: EnrichedUser) => void;
+  onResetHwidClick?: (user: EnrichedUser) => void;
 }
 
 export default function UserDetailsModal({
@@ -40,7 +42,8 @@ export default function UserDetailsModal({
   user,
   onToggleStatus,
   onOpenResetPassword,
-  onOpenDelete
+  onOpenDelete,
+  onResetHwidClick
 }: UserDetailsModalProps) {
   const [copiedField, setCopiedField] = useState<string | null>(null);
 
@@ -62,6 +65,7 @@ export default function UserDetailsModal({
   const used = license?.used_devices ?? 0;
   const isUnlimited = license?.is_unlimited_devices ?? false;
   const remaining = isUnlimited ? null : (license?.remaining_devices ?? null);
+  const isBound = Boolean((license?.device_hwids && license.device_hwids.length > 0) || used > 0);
   const devicePercentage =
     isUnlimited || !allowed || allowed === 0
       ? 0
@@ -281,26 +285,60 @@ export default function UserDetailsModal({
             )}
           </div>
 
-          {/* SECTION 3: DEVICE / USAGE */}
+          {/* SECTION 3: DEVICE / HWID */}
           <div className="rounded-xl bg-[#181818] border border-[#262626] p-4 space-y-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2 text-xs font-bold text-[#ff5f15] uppercase tracking-wider">
                 <Laptop className="h-3.5 w-3.5" />
-                <span>Device Usage</span>
+                <span>DEVICE / HWID</span>
               </div>
-              <span className="text-xs font-mono text-[#aaaaaa]">
-                {hasLicense
-                  ? isUnlimited
-                    ? `${used} devices used (Unlimited)`
-                    : `${used} / ${allowed} devices used`
-                  : 'Not tracked'}
-              </span>
+              {hasLicense && onResetHwidClick && (
+                <button
+                  type="button"
+                  onClick={() => onResetHwidClick(user)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-orange-500/10 hover:bg-orange-500/20 text-orange-400 border border-orange-500/30 text-xs font-semibold transition-colors cursor-pointer"
+                  title="Reset HWID / Device Binding"
+                >
+                  <RotateCcw className="h-3.5 w-3.5" />
+                  <span>Reset HWID</span>
+                </button>
+              )}
             </div>
 
             {hasLicense ? (
               <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-3 text-xs">
+                  <div className="p-3 rounded-lg bg-[#111111] border border-[#242424] space-y-1">
+                    <span className="text-[#727275] block text-[11px] font-semibold uppercase tracking-wider">
+                      HWID Status:
+                    </span>
+                    <div>
+                      {isBound ? (
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                          <span className="h-1.5 w-1.5 rounded-full bg-blue-400 animate-pulse" />
+                          Bound
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-zinc-800 text-zinc-400 border border-zinc-700">
+                          <span className="h-1.5 w-1.5 rounded-full bg-zinc-500" />
+                          Not Bound
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="p-3 rounded-lg bg-[#111111] border border-[#242424] space-y-1">
+                    <span className="text-[#727275] block text-[11px] font-semibold uppercase tracking-wider">
+                      Device:
+                    </span>
+                    <span className="font-bold text-white text-sm font-mono block">
+                      {isUnlimited ? `${used} / Unlimited` : `${used} / ${allowed ?? 1}`}
+                    </span>
+                  </div>
+                </div>
+
                 {/* Progress bar */}
-                <div className="w-full bg-[#111111] rounded-full h-2.5 overflow-hidden border border-[#242424]">
+                <div className="w-full bg-[#111111] rounded-full h-2 overflow-hidden border border-[#242424]">
                   <div
                     className={`h-full transition-all duration-300 rounded-full ${
                       isUnlimited
@@ -316,60 +354,6 @@ export default function UserDetailsModal({
                     }}
                   />
                 </div>
-
-                {/* Device breakdown cards */}
-                <div className="grid grid-cols-3 gap-2.5 text-center text-xs">
-                  <div className="p-2.5 rounded-lg bg-[#111111] border border-[#242424]">
-                    <span className="text-[#727275] block text-[11px] mb-0.5">Used</span>
-                    <span className="font-bold text-white text-sm">{used}</span>
-                  </div>
-                  <div className="p-2.5 rounded-lg bg-[#111111] border border-[#242424]">
-                    <span className="text-[#727275] block text-[11px] mb-0.5">Allowed</span>
-                    <span className="font-bold text-white text-sm">
-                      {isUnlimited ? 'Unlimited' : allowed}
-                    </span>
-                  </div>
-                  <div className="p-2.5 rounded-lg bg-[#111111] border border-[#242424]">
-                    <span className="text-[#727275] block text-[11px] mb-0.5">Remaining</span>
-                    <span
-                      className={`font-bold text-sm ${
-                        remaining !== null && remaining <= 0 ? 'text-red-400' : 'text-emerald-400'
-                      }`}
-                    >
-                      {isUnlimited ? 'Unlimited' : remaining}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Registered Device HWIDs list */}
-                {license?.device_hwids && license.device_hwids.length > 0 && (
-                  <div className="space-y-1.5 pt-2 border-t border-[#222222]">
-                    <span className="text-[11px] font-semibold text-[#727275] uppercase tracking-wider block">
-                      Registered HWID Fingerprints ({license.device_hwids.length})
-                    </span>
-                    <div className="space-y-1 max-h-24 overflow-y-auto">
-                      {license.device_hwids.map((hwid, idx) => (
-                        <div
-                          key={idx}
-                          className="flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-[#101010] border border-[#222222] font-mono text-[11px] text-[#bbbbbb]"
-                        >
-                          <span className="truncate">{hwid}</span>
-                          <button
-                            onClick={() => handleCopy(hwid, `hwid_${idx}`)}
-                            className="text-[#666666] hover:text-white transition-colors cursor-pointer shrink-0 ml-2"
-                            title="Copy HWID"
-                          >
-                            {copiedField === `hwid_${idx}` ? (
-                              <Check className="h-3 w-3 text-emerald-400" />
-                            ) : (
-                              <Copy className="h-3 w-3" />
-                            )}
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
               </div>
             ) : (
               <div className="p-4 rounded-xl bg-[#111111] border border-[#222222] text-center text-xs text-[#727275]">
@@ -450,6 +434,16 @@ export default function UserDetailsModal({
               >
                 <Lock className="h-3.5 w-3.5 text-[#ff5f15]" />
                 Reset Password
+              </button>
+            )}
+
+            {hasLicense && onResetHwidClick && (
+              <button
+                onClick={() => onResetHwidClick(user)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-orange-500/10 hover:bg-orange-500/20 text-orange-400 border border-orange-500/30 transition-colors cursor-pointer"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                Reset HWID
               </button>
             )}
           </div>

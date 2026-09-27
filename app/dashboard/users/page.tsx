@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { copyToClipboardSafe } from '@/lib/clipboard';
 import CreateUserModal from '@/components/create-user-modal';
 import UserDetailsModal from '@/components/user-details-modal';
+import ResetHwidModal from '@/components/reset-hwid-modal';
 import type { EnrichedUser } from '@/lib/user-service';
 import { AVAILABLE_SUBSCRIPTIONS } from '@/lib/subscriptions';
 import {
@@ -68,6 +69,8 @@ export default function UsersPage() {
   const [isResetPasswordModalOpen, setIsResetPasswordModalOpen] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [activeUser, setActiveUser] = useState<EnrichedUser | null>(null);
+  const [activeResetHwidUser, setActiveResetHwidUser] = useState<EnrichedUser | null>(null);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Reset password form state
   const [resetPassword, setResetPassword] = useState('');
@@ -86,6 +89,11 @@ export default function UsersPage() {
 
   // Copy feedback
   const [copiedKeyId, setCopiedKeyId] = useState<string | null>(null);
+
+  function showToast(msg: string) {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(null), 4000);
+  }
 
   async function fetchUsers(page: number = currentPage) {
     setIsLoading(true);
@@ -267,6 +275,14 @@ export default function UsersPage() {
 
   return (
     <div className="space-y-6">
+      {/* Toast Notification */}
+      {toastMessage && (
+        <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2.5 px-4 py-3 rounded-xl bg-[#1c1c1c] border border-emerald-800/60 text-white shadow-2xl animate-in slide-in-from-bottom-2">
+          <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+          <span className="text-xs font-medium">{toastMessage}</span>
+        </div>
+      )}
+
       {/* Top Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
@@ -830,6 +846,16 @@ export default function UsersPage() {
                             )}
                           </button>
 
+                          {hasLic && (
+                            <button
+                              onClick={() => setActiveResetHwidUser(user)}
+                              className="p-1.5 rounded-lg bg-[#202020] hover:bg-orange-500/20 text-[#888888] hover:text-orange-400 border border-transparent hover:border-orange-500/30 transition-colors cursor-pointer"
+                              title="Reset HWID / Device Binding"
+                            >
+                              <RotateCcw className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+
                           <button
                             onClick={() => {
                               setActiveUser(user);
@@ -948,6 +974,9 @@ export default function UsersPage() {
           setIsViewModalOpen(false);
           setDeleteError(null);
           setIsDeleteModalOpen(true);
+        }}
+        onResetHwidClick={(u) => {
+          setActiveResetHwidUser(u);
         }}
       />
 
@@ -1085,6 +1114,59 @@ export default function UsersPage() {
           </div>
         </div>
       )}
+
+      {/* RESET HWID MODAL */}
+      <ResetHwidModal
+        isOpen={Boolean(activeResetHwidUser)}
+        onClose={() => setActiveResetHwidUser(null)}
+        onSuccess={() => {
+          fetchUsers(currentPage);
+          showToast('HWID binding was successfully reset for this user.');
+          if (activeUser && activeResetHwidUser && activeUser.id === activeResetHwidUser.id) {
+            setActiveUser((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    license: prev.license
+                      ? {
+                          ...prev.license,
+                          device_hwids: [],
+                          used_devices: 0,
+                          remaining_devices: prev.license.is_unlimited_devices
+                            ? null
+                            : prev.license.allowed_devices
+                        }
+                      : null
+                  }
+                : null
+            );
+          }
+        }}
+        target={
+          activeResetHwidUser
+            ? {
+                type: 'user',
+                id: activeResetHwidUser.id,
+                applicationId: activeResetHwidUser.application_id,
+                applicationName: activeResetHwidUser.application?.name || 'Application',
+                userIdentifier: activeResetHwidUser.email || activeResetHwidUser.username || 'User',
+                maskedLicenseKey: activeResetHwidUser.license?.license_key_masked || 'No License',
+                isBound: Boolean(
+                  (activeResetHwidUser.license?.device_hwids &&
+                    activeResetHwidUser.license.device_hwids.length > 0) ||
+                    (activeResetHwidUser.license?.used_devices &&
+                      activeResetHwidUser.license.used_devices > 0)
+                ),
+                boundDeviceCount:
+                  activeResetHwidUser.license?.used_devices ||
+                  activeResetHwidUser.license?.device_hwids?.length ||
+                  0,
+                allowedDevices: activeResetHwidUser.license?.allowed_devices || 1,
+                licenseId: activeResetHwidUser.license?.id || undefined
+              }
+            : null
+        }
+      />
     </div>
   );
 }
