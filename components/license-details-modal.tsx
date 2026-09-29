@@ -36,6 +36,10 @@ export interface LicenseDetailData {
   created_at: string;
   updated_at: string;
   revoked_at?: string | null;
+  days_remaining?: number | null;
+  days_remaining_text?: string;
+  is_expired?: boolean;
+  is_expiring_soon?: boolean;
   application?: {
     id: string;
     name: string;

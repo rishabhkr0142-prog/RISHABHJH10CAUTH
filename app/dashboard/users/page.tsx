@@ -90,6 +90,21 @@ export default function UsersPage() {
   // Copy feedback
   const [copiedKeyId, setCopiedKeyId] = useState<string | null>(null);
 
+  // Database metrics
+  const [stats, setStats] = useState({
+    totalUsers: 0,
+    activeAccounts: 0,
+    activeLicenses: 0,
+    expiringSoon: 0,
+    devicesInUse: 0
+  });
+
+  // Bulk Selection & Deletion
+  const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
+  const [isBulkDeleteOpen, setIsBulkDeleteOpen] = useState(false);
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
+  const [bulkDeleteError, setBulkDeleteError] = useState<string | null>(null);
+
   function showToast(msg: string) {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 4000);
@@ -123,6 +138,9 @@ export default function UsersPage() {
       setTotalPages(data.totalPages || 1);
       setCurrentPage(data.page || 1);
       setApplications(data.applications || []);
+      if (data.stats) {
+        setStats(data.stats);
+      }
     } catch (err: any) {
       setError(err.message || 'Error fetching users');
     } finally {
@@ -267,11 +285,57 @@ export default function UsersPage() {
     }
   }
 
-  // Metrics summary
-  const activeAccountsCount = users.filter((u) => u.status === 'active').length;
-  const expiringSoonCount = users.filter((u) => u.license?.is_expiring_soon).length;
-  const activeLicensesCount = users.filter((u) => u.license?.status === 'active' || u.license?.status === 'used').length;
-  const totalDevicesUsed = users.reduce((acc, u) => acc + (u.license?.used_devices || 0), 0);
+  const isAllPageSelected = users.length > 0 && users.every((u) => selectedUserIds.includes(u.id));
+
+  function toggleSelectAll() {
+    if (isAllPageSelected) {
+      setSelectedUserIds((prev) => prev.filter((id) => !users.some((u) => u.id === id)));
+    } else {
+      const pageIds = users.map((u) => u.id);
+      setSelectedUserIds((prev) => Array.from(new Set([...prev, ...pageIds])));
+    }
+  }
+
+  function toggleSelectUser(userId: string) {
+    setSelectedUserIds((prev) =>
+      prev.includes(userId) ? prev.filter((id) => id !== userId) : [...prev, userId]
+    );
+  }
+
+  async function handleBulkDelete() {
+    if (selectedUserIds.length === 0) return;
+    setIsBulkDeleting(true);
+    setBulkDeleteError(null);
+
+    try {
+      const res = await fetch('/api/users', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userIds: selectedUserIds })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to delete selected users');
+      }
+
+      const count = data.deletedCount || selectedUserIds.length;
+      showToast(`Successfully deleted ${count} user${count > 1 ? 's' : ''}.`);
+      setSelectedUserIds([]);
+      setIsBulkDeleteOpen(false);
+      fetchUsers(currentPage);
+    } catch (err: any) {
+      setBulkDeleteError(err.message || 'Error deleting users');
+    } finally {
+      setIsBulkDeleting(false);
+    }
+  }
+
+  // Real Database Metrics summary
+  const totalUsersDisplay = stats.totalUsers || totalCount;
+  const activeAccountsDisplay = stats.activeAccounts;
+  const activeLicensesDisplay = stats.activeLicenses;
+  const expiringSoonDisplay = stats.expiringSoon;
+  const devicesInUseDisplay = stats.devicesInUse;
 
   return (
     <div className="space-y-6">
@@ -294,7 +358,7 @@ export default function UsersPage() {
               <h1 className="text-2xl font-bold tracking-tight text-white flex items-center gap-2">
                 Application Users
                 <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-[#222222] text-[#aaaaaa] border border-[#2d2d2d]">
-                  {totalCount} Total
+                  {totalUsersDisplay} Total
                 </span>
               </h1>
             </div>
@@ -333,7 +397,7 @@ export default function UsersPage() {
             <span className="text-xs font-semibold uppercase tracking-wider">Total Users</span>
             <Users className="h-4 w-4 text-[#ff5f15]" />
           </div>
-          <p className="text-2xl font-bold text-white mt-2">{totalCount}</p>
+          <p className="text-2xl font-bold text-white mt-2">{totalUsersDisplay}</p>
         </div>
 
         <div className="p-4 rounded-2xl bg-[#161616] border border-[#222222]">
@@ -341,7 +405,7 @@ export default function UsersPage() {
             <span className="text-xs font-semibold uppercase tracking-wider">Active Accounts</span>
             <CheckCircle2 className="h-4 w-4 text-emerald-400" />
           </div>
-          <p className="text-2xl font-bold text-white mt-2">{activeAccountsCount}</p>
+          <p className="text-2xl font-bold text-white mt-2">{activeAccountsDisplay}</p>
         </div>
 
         <div className="p-4 rounded-2xl bg-[#161616] border border-[#222222]">
@@ -349,16 +413,16 @@ export default function UsersPage() {
             <span className="text-xs font-semibold uppercase tracking-wider">Active Licenses</span>
             <KeyRound className="h-4 w-4 text-blue-400" />
           </div>
-          <p className="text-2xl font-bold text-white mt-2">{activeLicensesCount}</p>
+          <p className="text-2xl font-bold text-white mt-2">{activeLicensesDisplay}</p>
         </div>
 
         <div className="p-4 rounded-2xl bg-[#161616] border border-[#222222]">
           <div className="flex items-center justify-between text-[#727275]">
             <span className="text-xs font-semibold uppercase tracking-wider">Expiring Soon (≤7d)</span>
-            <AlertTriangle className={`h-4 w-4 ${expiringSoonCount > 0 ? 'text-amber-400 animate-pulse' : 'text-[#727275]'}`} />
+            <AlertTriangle className={`h-4 w-4 ${expiringSoonDisplay > 0 ? 'text-amber-400 animate-pulse' : 'text-[#727275]'}`} />
           </div>
-          <p className={`text-2xl font-bold mt-2 ${expiringSoonCount > 0 ? 'text-amber-400' : 'text-white'}`}>
-            {expiringSoonCount}
+          <p className={`text-2xl font-bold mt-2 ${expiringSoonDisplay > 0 ? 'text-amber-400' : 'text-white'}`}>
+            {expiringSoonDisplay}
           </p>
         </div>
 
@@ -367,7 +431,7 @@ export default function UsersPage() {
             <span className="text-xs font-semibold uppercase tracking-wider">Devices In Use</span>
             <Laptop className="h-4 w-4 text-purple-400" />
           </div>
-          <p className="text-2xl font-bold text-white mt-2">{totalDevicesUsed}</p>
+          <p className="text-2xl font-bold text-white mt-2">{devicesInUseDisplay}</p>
         </div>
       </div>
 
@@ -573,6 +637,15 @@ export default function UsersPage() {
             <table className="w-full text-left text-sm">
               <thead className="bg-[#111111] text-[#727275] text-[11px] uppercase font-semibold tracking-wider border-b border-[#222222]">
                 <tr>
+                  <th className="w-10 py-3.5 px-4 text-center">
+                    <input
+                      type="checkbox"
+                      checked={isAllPageSelected}
+                      onChange={toggleSelectAll}
+                      className="rounded border-[#333333] bg-[#1a1a1a] text-[#ff5f15] focus:ring-[#ff5f15]/40 cursor-pointer h-4 w-4"
+                      aria-label="Select all on this page"
+                    />
+                  </th>
                   <th className="py-3.5 px-4 min-w-[200px]">User</th>
                   <th className="py-3.5 px-4 min-w-[160px]">Application</th>
                   <th className="py-3.5 px-4 min-w-[200px]">License / Subscription</th>
@@ -595,9 +668,26 @@ export default function UsersPage() {
                     isUnlim || !allowedDev || allowedDev === 0
                       ? 0
                       : Math.min(100, Math.round((usedDev / allowedDev) * 100));
+                  const isSelected = selectedUserIds.includes(user.id);
 
                   return (
-                    <tr key={user.id} className="hover:bg-[#1a1a1a]/60 transition-colors">
+                    <tr
+                      key={user.id}
+                      className={`hover:bg-[#1a1a1a]/60 transition-colors ${
+                        isSelected ? 'bg-[#ff5f15]/5' : ''
+                      }`}
+                    >
+                      {/* CHECKBOX COLUMN */}
+                      <td className="w-10 py-3.5 px-4 text-center">
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => toggleSelectUser(user.id)}
+                          className="rounded border-[#333333] bg-[#1a1a1a] text-[#ff5f15] focus:ring-[#ff5f15]/40 cursor-pointer h-4 w-4"
+                          aria-label={`Select user ${user.email}`}
+                        />
+                      </td>
+
                       {/* USER COLUMN */}
                       <td className="py-3.5 px-4">
                         <div className="flex items-center gap-3">
@@ -699,7 +789,6 @@ export default function UsersPage() {
                         ) : (
                           <div className="space-y-0.5">
                             <span className="text-xs font-semibold text-[#727275]">No License</span>
-                            <span className="block text-[10px] text-[#555555]">Standard Access</span>
                           </div>
                         )}
                       </td>
@@ -713,10 +802,14 @@ export default function UsersPage() {
                               <span>{license.formatted_expiry}</span>
                             </div>
                             <div>
-                              {license.is_expired ? (
+                              {license.status === 'revoked' ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-red-500/10 text-red-400 border border-red-500/20">
+                                  Revoked
+                                </span>
+                              ) : license.is_expired ? (
                                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-red-500/10 text-red-400 border border-red-500/20">
                                   <AlertCircle className="h-3 w-3" />
-                                  Expired (0d left)
+                                  Expired
                                 </span>
                               ) : license.is_expiring_soon ? (
                                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20 animate-pulse">
@@ -737,7 +830,7 @@ export default function UsersPage() {
                         ) : (
                           <div className="space-y-0.5">
                             <span className="text-xs text-[#727275]">No Expiry</span>
-                            <span className="block text-[10px] text-[#555555]">Never expires</span>
+                            <span className="block text-[10px] text-[#555555]">No License</span>
                           </div>
                         )}
                       </td>
@@ -772,7 +865,7 @@ export default function UsersPage() {
                             )}
                           </div>
                         ) : (
-                          <span className="text-xs text-[#555555]">Not tracked</span>
+                          <span className="text-xs text-[#555555]">—</span>
                         )}
                       </td>
 
@@ -787,6 +880,10 @@ export default function UsersPage() {
                           </div>
                           <div className="text-[11px] text-[#727275]">
                             Logins: {activity.login_count !== null ? activity.login_count : (user.last_login_at ? 1 : 0)}
+                          </div>
+                          <div className="text-[10px] text-[#555555] flex items-center gap-1">
+                            <Clock className="h-2.5 w-2.5" />
+                            <span>Created {formatDateReliable(user.created_at)}</span>
                           </div>
                         </div>
                       </td>
@@ -942,6 +1039,84 @@ export default function UsersPage() {
           </div>
         )}
       </div>
+
+      {/* BULK ACTION TOOLBAR */}
+      {selectedUserIds.length > 0 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 flex items-center gap-3 px-4 py-2.5 rounded-2xl bg-[#161616] border border-[#ff5f15]/40 shadow-2xl shadow-black/80 animate-in slide-in-from-bottom-3">
+          <div className="flex items-center gap-2">
+            <span className="h-2 w-2 rounded-full bg-[#ff5f15] animate-ping" />
+            <span className="text-xs font-semibold text-white">
+              Selected: {selectedUserIds.length} {selectedUserIds.length === 1 ? 'user' : 'users'}
+            </span>
+          </div>
+          <div className="h-4 w-px bg-[#333333]" />
+          <button
+            type="button"
+            onClick={() => {
+              setBulkDeleteError(null);
+              setIsBulkDeleteOpen(true);
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-semibold transition-all shadow-[0_0_15px_rgba(220,38,38,0.3)] cursor-pointer"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            Delete Selected
+          </button>
+          <button
+            type="button"
+            onClick={() => setSelectedUserIds([])}
+            className="px-2.5 py-1.5 rounded-xl bg-[#222222] hover:bg-[#282828] text-[#888888] hover:text-white text-xs font-medium transition-colors cursor-pointer"
+          >
+            Deselect All
+          </button>
+        </div>
+      )}
+
+      {/* BULK DELETE CONFIRMATION MODAL */}
+      {isBulkDeleteOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
+          <div className="w-full max-w-md rounded-2xl bg-[#161616] border border-[#2a2a2a] p-6 shadow-2xl space-y-5">
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-xl bg-red-500/10 border border-red-500/20 flex items-center justify-center text-red-400">
+                <AlertTriangle className="h-5 w-5" />
+              </div>
+              <div>
+                <h3 className="font-bold text-white text-base">Delete {selectedUserIds.length} Users?</h3>
+                <p className="text-xs text-[#727275]">This action is permanent and cannot be undone.</p>
+              </div>
+            </div>
+
+            <p className="text-sm text-[#aaaaaa]">
+              This will permanently delete the <strong className="text-white">{selectedUserIds.length}</strong> selected users and their related authentication records according to existing safe database relationship rules. Independent application licenses will not be deleted.
+            </p>
+
+            {bulkDeleteError && (
+              <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-xs flex items-center gap-2">
+                <AlertCircle className="h-4 w-4 shrink-0" />
+                <span>{bulkDeleteError}</span>
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#222222]">
+              <button
+                type="button"
+                onClick={() => setIsBulkDeleteOpen(false)}
+                disabled={isBulkDeleting}
+                className="px-4 py-2.5 rounded-xl bg-[#1f1f1f] hover:bg-[#282828] text-xs font-semibold text-[#888888] hover:text-white transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleBulkDelete}
+                disabled={isBulkDeleting}
+                className="px-4 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-xs font-semibold text-white transition-all shadow-[0_0_15px_rgba(220,38,38,0.2)] cursor-pointer disabled:opacity-50"
+              >
+                {isBulkDeleting ? 'Deleting...' : `Delete ${selectedUserIds.length} Users`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* CREATE USER MODAL */}
       <CreateUserModal

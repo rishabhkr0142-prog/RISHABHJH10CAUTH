@@ -3,6 +3,7 @@ import type { License, LicenseStatus, EndUser, Application } from './supabase/ty
 
 export interface UserLicenseData {
   id: string | null;
+  license_key?: string;
   license_key_masked: string;
   subscription: string;
   subscription_name: string;
@@ -196,18 +197,40 @@ export function enrichUsersWithData(
     const userId = user.id;
 
     // 1. Try to find matched license in same application
-    const matchedLicense = licenses.find((lic) => {
+    let matchedLicense = licenses.find((lic) => {
       if (lic.application_id !== user.application_id) return false;
       if (!lic.note) return false;
       const cleanNote = lic.note.toLowerCase().trim();
+      const emailLocal = cleanEmail.split('@')[0];
       return (
         cleanNote === cleanEmail ||
         cleanNote === userId ||
         (cleanUsername && cleanNote === cleanUsername) ||
+        (emailLocal && cleanNote === emailLocal) ||
         cleanNote.includes(cleanEmail) ||
-        cleanNote.includes(userId)
+        cleanNote.includes(userId) ||
+        (cleanNote.length >= 3 && cleanEmail.includes(cleanNote))
       );
     });
+
+    // Fallback: Check if application logs record a direct link between this user and a license
+    if (!matchedLicense) {
+      const linkedLicenseId = logs.find((l) => {
+        if (l.application_id && l.application_id !== user.application_id) return false;
+        const meta = l.metadata || {};
+        const metaUserId = meta.userId || meta.user_id;
+        const metaEmail = meta.email ? String(meta.email).toLowerCase().trim() : null;
+        const licId = meta.licenseId || meta.license_id;
+        return licId && (metaUserId === userId || metaEmail === cleanEmail);
+      })?.metadata;
+
+      const licId = linkedLicenseId?.licenseId || linkedLicenseId?.license_id;
+      if (licId) {
+        matchedLicense = licenses.find(
+          (lic) => lic.id === licId && lic.application_id === user.application_id
+        );
+      }
+    }
 
     // 2. Scan logs for this user's activity and metadata fallback
     let userCreationMetadata: any = null;
@@ -247,7 +270,7 @@ export function enrichUsersWithData(
           });
         }
 
-        if (log.event === 'user.created' && !userCreationMetadata) {
+        if ((log.event === 'user.created' || log.event === 'seller.user.created') && !userCreationMetadata) {
           userCreationMetadata = meta;
         }
       }
@@ -281,8 +304,16 @@ export function enrichUsersWithData(
       const isUnlimited = allowedDevices >= 999;
       const remainingDevices = isUnlimited ? null : Math.max(0, allowedDevices - usedDevices);
 
+      const daysRemainingText =
+        effectiveStatus === 'revoked'
+          ? 'Revoked'
+          : expiryInfo.isExpired
+          ? 'Expired'
+          : expiryInfo.daysRemainingText;
+
       licenseData = {
         id: matchedLicense.id,
+        license_key: matchedLicense.license_key,
         license_key_masked: maskLicenseKey(matchedLicense.license_key),
         subscription: matchedLicense.subscription,
         subscription_name: subInfo.name,
@@ -296,10 +327,10 @@ export function enrichUsersWithData(
         expires_at: matchedLicense.expires_at,
         formatted_expiry: expiryInfo.formattedExpiry,
         days_remaining: expiryInfo.daysRemaining,
-        days_remaining_text: expiryInfo.daysRemainingText,
+        days_remaining_text: daysRemainingText,
         is_expired: expiryInfo.isExpired,
-        is_expiring_soon: expiryInfo.isExpiringSoon,
-        expiry_tag: expiryInfo.expiryTag,
+        is_expiring_soon: effectiveStatus !== 'revoked' && expiryInfo.isExpiringSoon,
+        expiry_tag: effectiveStatus === 'revoked' ? 'expired' : expiryInfo.expiryTag,
         created_at: matchedLicense.created_at,
         note: matchedLicense.note
       };
@@ -325,7 +356,7 @@ export function enrichUsersWithData(
       license: licenseData,
       activity: {
         last_login_at: user.last_login_at,
-        formatted_last_login: user.last_login_at ? formatDateReliable(user.last_login_at, true) : 'Never logged in',
+        formatted_last_login: user.last_login_at ? formatDateReliable(user.last_login_at, true) : 'Never',
         last_activity_at: latestActivityTimestamp,
         formatted_last_activity: latestActivityTimestamp ? formatDateReliable(latestActivityTimestamp, true) : 'Never',
         login_count: loginCount > 0 ? loginCount : (user.last_login_at ? 1 : 0),

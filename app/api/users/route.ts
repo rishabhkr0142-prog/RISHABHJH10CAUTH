@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getOwnerUser, logApplicationEvent } from '@/lib/supabase/auth';
 import { createClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { hashUserPassword } from '@/lib/crypto';
 import { AVAILABLE_SUBSCRIPTIONS } from '@/lib/subscriptions';
 import { enrichUsersWithData } from '@/lib/user-service';
@@ -22,10 +23,10 @@ export async function GET(request: Request) {
   const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10));
   const limit = Math.min(100, Math.max(1, parseInt(searchParams.get('limit') || '20', 10)));
 
-  const supabase = await createClient();
+  const admin = createAdminClient();
 
   // 1. Get applications owned by this owner
-  const { data: apps, error: appErr } = await supabase
+  const { data: apps, error: appErr } = await admin
     .from('applications')
     .select('id, name, client_id')
     .eq('owner_id', auth.profile.id);
@@ -44,7 +45,14 @@ export async function GET(request: Request) {
       limit,
       totalPages: 0,
       applications: [],
-      subscriptions: AVAILABLE_SUBSCRIPTIONS
+      subscriptions: AVAILABLE_SUBSCRIPTIONS,
+      stats: {
+        totalUsers: 0,
+        activeAccounts: 0,
+        activeLicenses: 0,
+        expiringSoon: 0,
+        devicesInUse: 0
+      }
     });
   }
 
@@ -58,7 +66,7 @@ export async function GET(request: Request) {
   }
 
   // 2. Fetch users belonging to target applications
-  let query = supabase
+  let query = admin
     .from('application_users')
     .select('id, application_id, username, email, password_hash, status, created_at, updated_at, last_login_at')
     .in('application_id', targetAppIds)
@@ -66,10 +74,6 @@ export async function GET(request: Request) {
 
   if (status && status !== 'all') {
     query = query.eq('status', status as 'active' | 'disabled' | 'suspended');
-  }
-
-  if (search) {
-    query = query.or(`email.ilike.%${search}%,username.ilike.%${search}%`);
   }
 
   const { data: rawUsers, error: userErr } = await query;
@@ -98,13 +102,13 @@ export async function GET(request: Request) {
   }
 
   // 3. Batch fetch licenses for the target applications
-  const { data: rawLicenses } = await supabase
+  const { data: rawLicenses } = await admin
     .from('licenses')
     .select('id, application_id, license_key, subscription, status, allowed_devices, used_devices, device_hwids, note, expires_at, created_at, updated_at, revoked_at')
     .in('application_id', targetAppIds);
 
   // 4. Batch fetch application logs for user events and activity
-  const { data: rawLogs } = await supabase
+  const { data: rawLogs } = await admin
     .from('application_logs')
     .select('event, application_id, metadata, created_at')
     .in('application_id', targetAppIds)
@@ -113,23 +117,72 @@ export async function GET(request: Request) {
       'user_authentication',
       'license.validated',
       'auth.validate',
-      'user.created'
+      'user.created',
+      'seller.user.created'
     ])
     .order('created_at', { ascending: false })
     .limit(2000);
 
-  // 5. Enrich users with license details, device usage, and activity statistics
-  const usersList = (rawUsers || []) as EndUser[];
-  const licensesList = (rawLicenses || []) as License[];
+  // 5. Compute real database metrics for Summary Cards from actual database records
+  const now = new Date();
+  const allTargetUsers = (rawUsers || []) as EndUser[];
+  const allTargetLicenses = (rawLicenses || []) as License[];
+
+  const totalUsersCount = allTargetUsers.length;
+  const activeAccountsCount = allTargetUsers.filter((u) => u.status === 'active').length;
+
+  // Active licenses: Count licenses from the License table where status is active/used and not expired
+  const activeLicensesInDb = allTargetLicenses.filter((lic) => {
+    if (lic.status === 'revoked') return false;
+    if (lic.expires_at && new Date(lic.expires_at) < now) return false;
+    return lic.status === 'active' || lic.status === 'used';
+  });
+  const activeLicensesCount = activeLicensesInDb.length;
+
+  // Expiring soon: <= 7 days, future expiry date, not revoked
+  const sevenDaysFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+  const expiringSoonLicenses = allTargetLicenses.filter((lic) => {
+    if (lic.status === 'revoked') return false;
+    if (!lic.expires_at) return false;
+    const expDate = new Date(lic.expires_at);
+    return expDate > now && expDate <= sevenDaysFromNow;
+  });
+  const expiringSoonCount = expiringSoonLicenses.length;
+
+  // Devices in use: actual device usage from licenses
+  const devicesInUseCount = activeLicensesInDb.reduce((acc, lic) => {
+    const used = lic.used_devices ?? (lic.device_hwids?.length || 0);
+    return acc + used;
+  }, 0);
+
+  // 6. Enrich users with license details, device usage, and activity statistics
+  const usersList = allTargetUsers;
+  const licensesList = allTargetLicenses;
   const logsList = (rawLogs || []) as { event: string; application_id: string | null; metadata: any; created_at: string }[];
 
   let enrichedUsers = enrichUsersWithData(usersList, appList, licensesList, logsList);
 
-  // 6. Apply post-enrichment filters (License Status, Subscription, Expiry)
+  // 7. Apply search filter across email, username, and license key
+  if (search) {
+    enrichedUsers = enrichedUsers.filter((u) => {
+      const emailMatches = u.email?.toLowerCase().includes(search);
+      const usernameMatches = u.username?.toLowerCase().includes(search);
+      const licenseMatches =
+        u.license &&
+        (u.license.license_key_masked?.toLowerCase().includes(search) ||
+          (u.license.license_key && u.license.license_key.toLowerCase().includes(search)));
+      return Boolean(emailMatches || usernameMatches || licenseMatches);
+    });
+  }
+
+  // 8. Apply post-enrichment filters (License Status, Subscription, Expiry)
   if (licenseStatus && licenseStatus !== 'all') {
     enrichedUsers = enrichedUsers.filter((u) => {
       if (licenseStatus === 'no_license') {
         return !u.license;
+      }
+      if (licenseStatus === 'active') {
+        return u.license && (u.license.status === 'active' || u.license.status === 'used') && !u.license.is_expired;
       }
       return u.license && u.license.status === licenseStatus;
     });
@@ -159,7 +212,7 @@ export async function GET(request: Request) {
     });
   }
 
-  // 7. Pagination
+  // 9. Pagination
   const totalCount = enrichedUsers.length;
   const totalPages = Math.ceil(totalCount / limit) || 1;
   const startIndex = (page - 1) * limit;
@@ -172,7 +225,14 @@ export async function GET(request: Request) {
     limit,
     totalPages,
     applications: appList,
-    subscriptions: AVAILABLE_SUBSCRIPTIONS
+    subscriptions: AVAILABLE_SUBSCRIPTIONS,
+    stats: {
+      totalUsers: totalUsersCount,
+      activeAccounts: activeAccountsCount,
+      activeLicenses: activeLicensesCount,
+      expiringSoon: expiringSoonCount,
+      devicesInUse: devicesInUseCount
+    }
   });
 }
 
@@ -320,6 +380,99 @@ export async function POST(request: Request) {
       },
       { status: 201 }
     );
+  } catch (err: any) {
+    return NextResponse.json(
+      { error: err.message || 'Internal server error' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function DELETE(request: Request) {
+  const auth = await getOwnerUser();
+  if (!auth) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  try {
+    const body = await request.json().catch(() => ({}));
+    const userIds = Array.isArray(body.userIds) ? body.userIds : [];
+
+    if (userIds.length === 0) {
+      return NextResponse.json(
+        { error: 'At least one user ID must be selected for deletion' },
+        { status: 400 }
+      );
+    }
+
+    const admin = createAdminClient();
+
+    // 1. Fetch applications owned by this owner
+    const { data: ownerApps, error: appErr } = await admin
+      .from('applications')
+      .select('id')
+      .eq('owner_id', auth.profile.id);
+
+    if (appErr) {
+      return NextResponse.json({ error: appErr.message }, { status: 500 });
+    }
+
+    const ownerAppIds = new Set((ownerApps || []).map((a) => a.id));
+
+    // 2. Query target users to verify existence and ownership
+    const { data: targetUsers, error: userErr } = await admin
+      .from('application_users')
+      .select('id, application_id, email, username')
+      .in('id', userIds);
+
+    if (userErr) {
+      return NextResponse.json({ error: userErr.message }, { status: 500 });
+    }
+
+    if (!targetUsers || targetUsers.length === 0) {
+      return NextResponse.json({ error: 'No matching users found' }, { status: 404 });
+    }
+
+    // 3. Security check: EVERY user must belong to an application owned by this owner
+    const unauthorizedUser = targetUsers.find((u) => !ownerAppIds.has(u.application_id));
+    if (unauthorizedUser || targetUsers.length !== userIds.length) {
+      return NextResponse.json(
+        { error: 'Forbidden: One or more selected users do not belong to an application you own' },
+        { status: 403 }
+      );
+    }
+
+    // 4. Safely delete the users from application_users
+    // Note: Do NOT cascade delete unrelated licenses, applications, API keys, etc.
+    const { error: deleteErr } = await admin
+      .from('application_users')
+      .delete()
+      .in('id', userIds);
+
+    if (deleteErr) {
+      return NextResponse.json({ error: deleteErr.message }, { status: 500 });
+    }
+
+    // 5. Log audit trail
+    for (const u of targetUsers) {
+      await logApplicationEvent({
+        applicationId: u.application_id,
+        event: 'user.deleted',
+        metadata: {
+          userId: u.id,
+          email: u.email,
+          username: u.username,
+          bulk: true,
+          batchSize: userIds.length
+        }
+      });
+    }
+
+    return NextResponse.json({
+      success: true,
+      message: `Successfully deleted ${targetUsers.length} user${targetUsers.length > 1 ? 's' : ''}`,
+      deletedCount: targetUsers.length
+    });
   } catch (err: any) {
     return NextResponse.json(
       { error: err.message || 'Internal server error' },

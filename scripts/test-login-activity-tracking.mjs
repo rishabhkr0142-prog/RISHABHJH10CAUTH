@@ -66,7 +66,7 @@ assert.strictEqual(enriched[0].license.status, 'active');
 assert.strictEqual(enriched[0].license.used_devices, 0);
 assert.strictEqual(enriched[0].license.allowed_devices, 1);
 assert.strictEqual(enriched[0].activity.last_login_at, null);
-assert.strictEqual(enriched[0].activity.formatted_last_login, 'Never logged in');
+assert.strictEqual(enriched[0].activity.formatted_last_login, 'Never');
 assert.strictEqual(enriched[0].activity.login_count, 0);
 assert.strictEqual(enriched[0].activity.login_history.length, 0);
 console.log('✓ Initial state verified: Devices 0 / 1, Login Count: 0, Last Login: Never');

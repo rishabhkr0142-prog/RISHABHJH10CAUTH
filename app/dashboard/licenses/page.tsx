@@ -68,6 +68,12 @@ export default function LicensesPage() {
   const [copiedKeyId, setCopiedKeyId] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
+  // Bulk Selection & Deletion
+  const [selectedLicenseIds, setSelectedLicenseIds] = useState<string[]>([]);
+  const [isBulkDeleteOpen, setIsBulkDeleteOpen] = useState(false);
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
+  const [bulkDeleteError, setBulkDeleteError] = useState<string | null>(null);
+
   async function fetchLicenses(page: number = currentPage) {
     setIsLoading(true);
     setError(null);
@@ -158,6 +164,51 @@ export default function LicensesPage() {
   function showToast(msg: string) {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 4000);
+  }
+
+  const isAllPageSelected = licenses.length > 0 && licenses.every((l) => selectedLicenseIds.includes(l.id));
+
+  function toggleSelectAll() {
+    if (isAllPageSelected) {
+      setSelectedLicenseIds((prev) => prev.filter((id) => !licenses.some((l) => l.id === id)));
+    } else {
+      const pageIds = licenses.map((l) => l.id);
+      setSelectedLicenseIds((prev) => Array.from(new Set([...prev, ...pageIds])));
+    }
+  }
+
+  function toggleSelectLicense(licenseId: string) {
+    setSelectedLicenseIds((prev) =>
+      prev.includes(licenseId) ? prev.filter((id) => id !== licenseId) : [...prev, licenseId]
+    );
+  }
+
+  async function handleBulkDelete() {
+    if (selectedLicenseIds.length === 0) return;
+    setIsBulkDeleting(true);
+    setBulkDeleteError(null);
+
+    try {
+      const res = await fetch('/api/licenses', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ licenseIds: selectedLicenseIds })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to delete selected licenses');
+      }
+
+      const count = data.deletedCount || selectedLicenseIds.length;
+      showToast(`Successfully deleted ${count} license${count > 1 ? 's' : ''}.`);
+      setSelectedLicenseIds([]);
+      setIsBulkDeleteOpen(false);
+      fetchLicenses(currentPage);
+    } catch (err: any) {
+      setBulkDeleteError(err.message || 'Error deleting licenses');
+    } finally {
+      setIsBulkDeleting(false);
+    }
   }
 
   function formatDate(iso: string | null | undefined): string {
@@ -424,11 +475,22 @@ export default function LicensesPage() {
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="border-b border-[#222222] bg-[#141414] text-[11px] font-semibold text-[#727275] uppercase tracking-wider">
+                <th className="w-10 px-4 py-3.5 text-center">
+                  <input
+                    type="checkbox"
+                    checked={isAllPageSelected}
+                    onChange={toggleSelectAll}
+                    className="rounded border-[#333333] bg-[#1a1a1a] text-[#ff5f15] focus:ring-[#ff5f15]/40 cursor-pointer h-4 w-4"
+                    aria-label="Select all on this page"
+                  />
+                </th>
                 <th className="px-5 py-3.5">License Key</th>
+                <th className="px-4 py-3.5">Application</th>
                 <th className="px-4 py-3.5">Subscription</th>
                 <th className="px-4 py-3.5">Status</th>
                 <th className="px-4 py-3.5">Created</th>
                 <th className="px-4 py-3.5">Expiry</th>
+                <th className="px-4 py-3.5">Days Remaining</th>
                 <th className="px-4 py-3.5">Allowed Devices</th>
                 <th className="px-4 py-3.5">Used Devices</th>
                 <th className="px-4 py-3.5">Note</th>
@@ -438,7 +500,7 @@ export default function LicensesPage() {
             <tbody className="divide-y divide-[#1e1e1e] text-xs">
               {isLoading ? (
                 <tr>
-                  <td colSpan={9} className="px-5 py-12 text-center text-[#727275]">
+                  <td colSpan={12} className="px-5 py-12 text-center text-[#727275]">
                     <div className="flex flex-col items-center justify-center gap-2">
                       <div className="h-6 w-6 border-2 border-[#ff5f15] border-t-transparent rounded-full animate-spin" />
                       <span>Loading licenses...</span>
@@ -447,7 +509,7 @@ export default function LicensesPage() {
                 </tr>
               ) : licenses.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="px-5 py-12 text-center text-[#727275]">
+                  <td colSpan={12} className="px-5 py-12 text-center text-[#727275]">
                     <div className="flex flex-col items-center justify-center gap-2">
                       <KeyRound className="h-8 w-8 text-[#444444]" />
                       <p className="text-sm font-medium text-zinc-400">No licenses found</p>
@@ -463,12 +525,26 @@ export default function LicensesPage() {
                 licenses.map((lic) => {
                   const subDetails = getSubscriptionDetails(lic.subscription);
                   const isCopied = copiedKeyId === lic.id;
+                  const isSelected = selectedLicenseIds.includes(lic.id);
 
                   return (
                     <tr
                       key={lic.id}
-                      className="hover:bg-[#161616]/70 transition-colors group"
+                      className={`hover:bg-[#161616]/70 transition-colors group ${
+                        isSelected ? 'bg-[#ff5f15]/5' : ''
+                      }`}
                     >
+                      {/* Checkbox */}
+                      <td className="w-10 px-4 py-3.5 text-center">
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => toggleSelectLicense(lic.id)}
+                          className="rounded border-[#333333] bg-[#1a1a1a] text-[#ff5f15] focus:ring-[#ff5f15]/40 cursor-pointer h-4 w-4"
+                          aria-label={`Select license ${lic.license_key}`}
+                        />
+                      </td>
+
                       {/* License Key */}
                       <td className="px-5 py-3.5 font-mono text-white">
                         <div className="flex items-center gap-2">
@@ -488,9 +564,17 @@ export default function LicensesPage() {
                             )}
                           </button>
                         </div>
-                        {lic.application && (
-                          <span className="text-[10px] text-[#666666]">
+                      </td>
+
+                      {/* Application */}
+                      <td className="px-4 py-3.5">
+                        {lic.application ? (
+                          <span className="text-xs font-mono text-[#dcdcdc] bg-[#1a1a1a] px-2 py-0.5 rounded border border-[#282828] inline-block max-w-[140px] truncate" title={lic.application.name}>
                             {lic.application.name}
+                          </span>
+                        ) : (
+                          <span className="text-xs font-mono text-[#555555]">
+                            {lic.application_id.slice(0, 8)}...
                           </span>
                         )}
                       </td>
@@ -515,6 +599,32 @@ export default function LicensesPage() {
                       {/* Expiry */}
                       <td className="px-4 py-3.5 text-[#aaaaaa] font-mono text-[11px]">
                         {formatDate(lic.expires_at)}
+                      </td>
+
+                      {/* Days Remaining */}
+                      <td className="px-4 py-3.5 whitespace-nowrap">
+                        {lic.status === 'revoked' ? (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold bg-red-950/60 text-red-400 border border-red-800/60">
+                            Revoked
+                          </span>
+                        ) : lic.is_expired ? (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold bg-red-950/60 text-red-400 border border-red-800/60">
+                            Expired
+                          </span>
+                        ) : lic.is_expiring_soon ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-950/60 text-amber-400 border border-amber-800/60 animate-pulse">
+                            <AlertTriangle className="h-3 w-3" />
+                            {lic.days_remaining_text || `${lic.days_remaining}d left`}
+                          </span>
+                        ) : lic.expires_at ? (
+                          <span className="text-[11px] text-[#888888] font-mono">
+                            {lic.days_remaining_text || (lic.days_remaining !== null && lic.days_remaining !== undefined ? `${lic.days_remaining}d left` : 'Active')}
+                          </span>
+                        ) : (
+                          <span className="text-[11px] text-[#727275]">
+                            Never
+                          </span>
+                        )}
                       </td>
 
                       {/* Allowed Devices */}
@@ -663,6 +773,84 @@ export default function LicensesPage() {
           </div>
         </div>
       </div>
+
+      {/* Bulk Action Toolbar */}
+      {selectedLicenseIds.length > 0 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 flex items-center gap-3 px-4 py-2.5 rounded-2xl bg-[#161616] border border-[#ff5f15]/40 shadow-2xl shadow-black/80 animate-in slide-in-from-bottom-3">
+          <div className="flex items-center gap-2">
+            <span className="h-2 w-2 rounded-full bg-[#ff5f15] animate-ping" />
+            <span className="text-xs font-semibold text-white">
+              {selectedLicenseIds.length} {selectedLicenseIds.length === 1 ? 'license' : 'licenses'} selected
+            </span>
+          </div>
+          <div className="h-4 w-px bg-[#333333]" />
+          <button
+            type="button"
+            onClick={() => {
+              setBulkDeleteError(null);
+              setIsBulkDeleteOpen(true);
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-semibold transition-all shadow-[0_0_15px_rgba(220,38,38,0.3)] cursor-pointer"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            Delete Selected
+          </button>
+          <button
+            type="button"
+            onClick={() => setSelectedLicenseIds([])}
+            className="px-2.5 py-1.5 rounded-xl bg-[#222222] hover:bg-[#282828] text-[#888888] hover:text-white text-xs font-medium transition-colors cursor-pointer"
+          >
+            Deselect All
+          </button>
+        </div>
+      )}
+
+      {/* Bulk Delete Modal */}
+      {isBulkDeleteOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
+          <div className="w-full max-w-md rounded-2xl bg-[#161616] border border-[#2a2a2a] p-6 shadow-2xl space-y-5">
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-xl bg-red-500/10 border border-red-500/20 flex items-center justify-center text-red-400">
+                <AlertTriangle className="h-5 w-5" />
+              </div>
+              <div>
+                <h3 className="font-bold text-white text-base">Delete {selectedLicenseIds.length} Licenses?</h3>
+                <p className="text-xs text-[#727275]">This action is permanent and cannot be undone.</p>
+              </div>
+            </div>
+
+            <p className="text-sm text-[#aaaaaa]">
+              Are you sure you want to permanently delete <strong className="text-white">{selectedLicenseIds.length}</strong> selected license keys? Any bound devices or active user links using these keys will lose authorization.
+            </p>
+
+            {bulkDeleteError && (
+              <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-xs flex items-center gap-2">
+                <AlertCircle className="h-4 w-4 shrink-0" />
+                <span>{bulkDeleteError}</span>
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#222222]">
+              <button
+                type="button"
+                onClick={() => setIsBulkDeleteOpen(false)}
+                disabled={isBulkDeleting}
+                className="px-4 py-2.5 rounded-xl bg-[#1f1f1f] hover:bg-[#282828] text-xs font-semibold text-[#888888] hover:text-white transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleBulkDelete}
+                disabled={isBulkDeleting}
+                className="px-4 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-xs font-semibold text-white transition-all shadow-[0_0_15px_rgba(220,38,38,0.2)] cursor-pointer disabled:opacity-50"
+              >
+                {isBulkDeleting ? 'Deleting...' : `Delete ${selectedLicenseIds.length} Licenses`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modals */}
       <GenerateLicenseModal

@@ -124,9 +124,33 @@ export async function GET(request: Request) {
         currentStatus = 'expired';
       }
 
+      let daysRemaining: number | null = null;
+      let daysRemainingText = 'Never expires';
+      let isExpired = false;
+      let isExpiringSoon = false;
+
+      if (lic.expires_at) {
+        const expDate = new Date(lic.expires_at);
+        const diffMs = expDate.getTime() - now.getTime();
+        const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+        if (diffMs <= 0) {
+          isExpired = true;
+          daysRemaining = 0;
+          daysRemainingText = 'Expired';
+        } else {
+          daysRemaining = diffDays;
+          isExpiringSoon = diffDays <= 7;
+          daysRemainingText = diffDays === 1 ? '1 day remaining' : `${diffDays} days remaining`;
+        }
+      }
+
       return {
         ...lic,
         status: currentStatus,
+        days_remaining: daysRemaining,
+        days_remaining_text: currentStatus === 'revoked' ? 'Revoked' : daysRemainingText,
+        is_expired: isExpired,
+        is_expiring_soon: currentStatus !== 'revoked' && isExpiringSoon,
         application: appMap.get(lic.application_id) || null
       };
     });
@@ -253,6 +277,97 @@ export async function POST(request: Request) {
         ...(err.code ? { code: err.code } : {})
       },
       { status }
+    );
+  }
+}
+
+export async function DELETE(request: Request) {
+  const auth = await getOwnerUser();
+  if (!auth) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  try {
+    const body = await request.json().catch(() => ({}));
+    const licenseIds = Array.isArray(body.licenseIds) ? body.licenseIds : [];
+
+    if (licenseIds.length === 0) {
+      return NextResponse.json(
+        { error: 'At least one license ID must be selected for deletion' },
+        { status: 400 }
+      );
+    }
+
+    const admin = createAdminClient();
+
+    // 1. Fetch applications owned by this owner
+    const { data: ownerApps, error: appErr } = await admin
+      .from('applications')
+      .select('id')
+      .eq('owner_id', auth.profile.id);
+
+    if (appErr) {
+      return NextResponse.json({ error: appErr.message }, { status: 500 });
+    }
+
+    const ownerAppIds = new Set((ownerApps || []).map((a) => a.id));
+
+    // 2. Query target licenses to verify existence and ownership
+    const { data: targetLicenses, error: licErr } = await admin
+      .from('licenses')
+      .select('id, application_id, license_key')
+      .in('id', licenseIds);
+
+    if (licErr) {
+      return NextResponse.json({ error: licErr.message }, { status: 500 });
+    }
+
+    if (!targetLicenses || targetLicenses.length === 0) {
+      return NextResponse.json({ error: 'No matching licenses found' }, { status: 404 });
+    }
+
+    // 3. Security check: EVERY license must belong to an application owned by this owner
+    const unauthorizedLic = targetLicenses.find((l) => !ownerAppIds.has(l.application_id));
+    if (unauthorizedLic || targetLicenses.length !== licenseIds.length) {
+      return NextResponse.json(
+        { error: 'Forbidden: One or more selected licenses do not belong to an application you own' },
+        { status: 403 }
+      );
+    }
+
+    // 4. Safely delete licenses from licenses table
+    const { error: deleteErr } = await admin
+      .from('licenses')
+      .delete()
+      .in('id', licenseIds);
+
+    if (deleteErr) {
+      return NextResponse.json({ error: deleteErr.message }, { status: 500 });
+    }
+
+    // 5. Log audit trail
+    for (const lic of targetLicenses) {
+      await logApplicationEvent({
+        applicationId: lic.application_id,
+        event: 'license.deleted',
+        metadata: {
+          licenseId: lic.id,
+          licenseKeySuffix: lic.license_key ? lic.license_key.slice(-4) : '',
+          bulk: true,
+          batchSize: licenseIds.length
+        }
+      });
+    }
+
+    return NextResponse.json({
+      success: true,
+      message: `Successfully deleted ${targetLicenses.length} license${targetLicenses.length > 1 ? 's' : ''}`,
+      deletedCount: targetLicenses.length
+    });
+  } catch (err: any) {
+    return NextResponse.json(
+      { error: err.message || 'Internal server error' },
+      { status: 500 }
     );
   }
 }
