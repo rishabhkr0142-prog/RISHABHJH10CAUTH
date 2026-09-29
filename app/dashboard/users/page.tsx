@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import { copyToClipboardSafe } from '@/lib/clipboard';
 import CreateUserModal from '@/components/create-user-modal';
@@ -43,6 +44,72 @@ interface Application {
   id: string;
   name: string;
   client_id: string;
+}
+
+/**
+ * Smart floating positioning calculator:
+ * Determines whether to open ABOVE or BELOW the 3-dot button based on available viewport space.
+ * Clamps coordinates so the menu remains completely visible within the viewport without clipping.
+ */
+function calculateMenuPosition(
+  anchorEl: HTMLElement,
+  menuEl: HTMLElement | null
+): { top: number; left: number; openAbove: boolean } {
+  const rect = anchorEl.getBoundingClientRect();
+  const viewportWidth = window.innerWidth;
+  const viewportHeight = window.innerHeight;
+
+  // Menu dimensions (w-48 is 192px, 9 items + divider + padding is ~344px)
+  const menuWidth = menuEl?.offsetWidth || 192;
+  const menuHeight = menuEl?.offsetHeight || 344;
+
+  const gap = 6;
+  const edgePadding = 12;
+
+  const spaceBelow = viewportHeight - rect.bottom;
+  const spaceAbove = rect.top;
+  const neededSpace = menuHeight + gap + edgePadding;
+
+  // Decide vertical direction:
+  // If not enough space below AND there is enough space above (or more space above than below), open ABOVE.
+  let openAbove = false;
+  if (spaceBelow < neededSpace && (spaceAbove >= neededSpace || spaceAbove > spaceBelow)) {
+    openAbove = true;
+  } else {
+    openAbove = false;
+  }
+
+  let top: number;
+  if (openAbove) {
+    top = rect.top - menuHeight - gap;
+  } else {
+    top = rect.bottom + gap;
+  }
+
+  // Ensure within vertical viewport bounds
+  if (top + menuHeight > viewportHeight - edgePadding) {
+    top = viewportHeight - menuHeight - edgePadding;
+  }
+  if (top < edgePadding) {
+    top = edgePadding;
+  }
+
+  // Horizontal position: align right edge of menu with right edge of button
+  let left = rect.right - menuWidth;
+
+  // Ensure within horizontal viewport bounds
+  if (left + menuWidth > viewportWidth - edgePadding) {
+    left = viewportWidth - menuWidth - edgePadding;
+  }
+  if (left < edgePadding) {
+    left = edgePadding;
+  }
+
+  return {
+    top: Math.round(top),
+    left: Math.round(left),
+    openAbove
+  };
 }
 
 export default function UsersPage() {
@@ -109,6 +176,24 @@ export default function UsersPage() {
   const rowsDropdownRef = useRef<HTMLDivElement>(null);
   const bulkActionsRef = useRef<HTMLDivElement>(null);
 
+  // Floating Action Menu Portal State
+  const [actionMenuAnchor, setActionMenuAnchor] = useState<HTMLElement | null>(null);
+  const [actionMenuUser, setActionMenuUser] = useState<EnrichedUser | null>(null);
+  const [menuCoords, setMenuCoords] = useState<{ top: number; left: number; openAbove: boolean } | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [isMounted, setIsMounted] = useState(false);
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
+
+  const closeActionMenu = useCallback(() => {
+    setOpenActionMenuId(null);
+    setActionMenuUser(null);
+    setActionMenuAnchor(null);
+    setMenuCoords(null);
+  }, []);
+
   function showToast(msg: string) {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3500);
@@ -139,14 +224,14 @@ export default function UsersPage() {
         setIsFilterOpen(false);
         setIsRowsDropdownOpen(false);
         setIsBulkActionsOpen(false);
-        setOpenActionMenuId(null);
+        closeActionMenu();
         setIsCustomizeOpen(false);
       }
     }
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isCreateModalOpen, isEditModalOpen, isExtendTimeOpen, isSubtractTimeOpen]);
+  }, [isCreateModalOpen, isEditModalOpen, isExtendTimeOpen, isSubtractTimeOpen, closeActionMenu]);
 
   // Close popovers on click outside
   useEffect(() => {
@@ -165,6 +250,65 @@ export default function UsersPage() {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  // Reposition floating action menu or safely close on scroll and resize
+  useEffect(() => {
+    if (!actionMenuAnchor || !actionMenuUser) return;
+
+    const handleUpdate = () => {
+      if (!actionMenuAnchor) return;
+      const rect = actionMenuAnchor.getBoundingClientRect();
+      // If button scrolled completely off viewport, close safely
+      if (
+        rect.bottom < 0 ||
+        rect.top > window.innerHeight ||
+        rect.right < 0 ||
+        rect.left > window.innerWidth
+      ) {
+        closeActionMenu();
+        return;
+      }
+      setMenuCoords(calculateMenuPosition(actionMenuAnchor, menuRef.current));
+    };
+
+    window.addEventListener('scroll', handleUpdate, true);
+    window.addEventListener('resize', handleUpdate);
+
+    return () => {
+      window.removeEventListener('scroll', handleUpdate, true);
+      window.removeEventListener('resize', handleUpdate);
+    };
+  }, [actionMenuAnchor, actionMenuUser, closeActionMenu]);
+
+  // Close floating action menu on outside click or Escape
+  useEffect(() => {
+    if (!actionMenuAnchor || !actionMenuUser) return;
+
+    function handleClickOutside(event: MouseEvent) {
+      const target = event.target as Node;
+      if (menuRef.current && menuRef.current.contains(target)) {
+        return;
+      }
+      if (actionMenuAnchor && actionMenuAnchor.contains(target)) {
+        return;
+      }
+      closeActionMenu();
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        closeActionMenu();
+      }
+    }
+
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [actionMenuAnchor, actionMenuUser, closeActionMenu]);
 
   async function fetchUsers(page: number = currentPage) {
     setIsLoading(true);
@@ -242,7 +386,7 @@ export default function UsersPage() {
 
   // Copy Info
   async function handleCopyInfo(user: EnrichedUser) {
-    setOpenActionMenuId(null);
+    closeActionMenu();
     const createdDt = formatTableDateTime(user.created_at);
     const expiryDt = user.license?.expires_at ? formatTableDateTime(user.license.expires_at) : null;
 
@@ -374,7 +518,7 @@ export default function UsersPage() {
   }
 
   function openResetHwidModal(user: EnrichedUser) {
-    setOpenActionMenuId(null);
+    closeActionMenu();
     setActiveResetHwidTarget({
       type: 'user',
       id: user.id,
@@ -723,7 +867,6 @@ export default function UsersPage() {
               ) : (
                 users.map((user, idx) => {
                   const isSelected = selectedUserIds.includes(user.id);
-                  const isMenuOpen = openActionMenuId === user.id;
 
                   const createdDt = formatTableDateTime(user.created_at);
                   const expiryDt = user.license?.expires_at
@@ -824,152 +967,33 @@ export default function UsersPage() {
 
                       {/* ACTIONS */}
                       {visibleColumns.actions && (
-                        <td className="py-4 px-4 text-right relative">
+                        <td className="py-4 px-4 text-right">
                           <button
                             type="button"
-                            onClick={() =>
-                              setOpenActionMenuId(isMenuOpen ? null : user.id)
-                            }
-                            className="p-1.5 rounded-lg text-[#777777] hover:text-white hover:bg-[#202020] transition-colors cursor-pointer"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (openActionMenuId === user.id) {
+                                closeActionMenu();
+                              } else {
+                                const button = e.currentTarget;
+                                const initialPos = calculateMenuPosition(button, null);
+                                setOpenActionMenuId(user.id);
+                                setActionMenuUser(user);
+                                setActionMenuAnchor(button);
+                                setMenuCoords(initialPos);
+                              }
+                            }}
+                            className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+                              openActionMenuId === user.id
+                                ? 'text-white bg-[#202020]'
+                                : 'text-[#777777] hover:text-white hover:bg-[#202020]'
+                            }`}
+                            title="Actions"
+                            aria-expanded={openActionMenuId === user.id}
+                            aria-haspopup="true"
                           >
                             <MoreHorizontal className="h-4 w-4" />
                           </button>
-
-                          {/* Action Dropdown Menu matching reference screenshot */}
-                          {isMenuOpen && (
-                            <div
-                              className="absolute right-4 top-12 w-48 bg-[#141414] border border-[#282828] rounded-xl shadow-2xl py-1.5 z-40 text-left animate-in fade-in-0 zoom-in-95"
-                              onMouseLeave={() => setOpenActionMenuId(null)}
-                            >
-                              {/* Edit User */}
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setOpenActionMenuId(null);
-                                  setActiveUser(user);
-                                  setIsEditModalOpen(true);
-                                }}
-                                className="w-full text-left px-3.5 py-2 text-xs text-[#dddddd] hover:text-white hover:bg-[#202020] transition-colors cursor-pointer flex items-center gap-2.5"
-                              >
-                                <Edit3 className="h-3.5 w-3.5 text-[#888888]" />
-                                <span>Edit User</span>
-                              </button>
-
-                              {/* Deselect */}
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setOpenActionMenuId(null);
-                                  setSelectedUserIds((prev) => prev.filter((id) => id !== user.id));
-                                }}
-                                className="w-full text-left px-3.5 py-2 text-xs text-[#dddddd] hover:text-white hover:bg-[#202020] transition-colors cursor-pointer flex items-center gap-2.5"
-                              >
-                                <SquareX className="h-3.5 w-3.5 text-[#888888]" />
-                                <span>Deselect</span>
-                              </button>
-
-                              {/* Ban User */}
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setOpenActionMenuId(null);
-                                  setActiveUser(user);
-                                  setIsBanModalOpen(true);
-                                }}
-                                className="w-full text-left px-3.5 py-2 text-xs text-[#dddddd] hover:text-white hover:bg-[#202020] transition-colors cursor-pointer flex items-center gap-2.5"
-                              >
-                                <Ban className="h-3.5 w-3.5 text-[#888888]" />
-                                <span>{user.status === 'suspended' ? 'Unban User' : 'Ban User'}</span>
-                              </button>
-
-                              {/* Pause / Resume */}
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setOpenActionMenuId(null);
-                                  setActiveUser(user);
-                                  setIsPauseModalOpen(true);
-                                }}
-                                className="w-full text-left px-3.5 py-2 text-xs text-[#dddddd] hover:text-white hover:bg-[#202020] transition-colors cursor-pointer flex items-center gap-2.5"
-                              >
-                                {user.status === 'disabled' ? (
-                                  <>
-                                    <PlayCircle className="h-3.5 w-3.5 text-emerald-400" />
-                                    <span>Resume</span>
-                                  </>
-                                ) : (
-                                  <>
-                                    <PauseCircle className="h-3.5 w-3.5 text-[#888888]" />
-                                    <span>Pause</span>
-                                  </>
-                                )}
-                              </button>
-
-                              {/* Extend Time */}
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setOpenActionMenuId(null);
-                                  setActiveUser(user);
-                                  setIsExtendTimeOpen(true);
-                                }}
-                                className="w-full text-left px-3.5 py-2 text-xs text-[#dddddd] hover:text-white hover:bg-[#202020] transition-colors cursor-pointer flex items-center gap-2.5"
-                              >
-                                <Clock className="h-3.5 w-3.5 text-[#888888]" />
-                                <span>Extend Time</span>
-                              </button>
-
-                              {/* Subtract Time */}
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setOpenActionMenuId(null);
-                                  setActiveUser(user);
-                                  setIsSubtractTimeOpen(true);
-                                }}
-                                className="w-full text-left px-3.5 py-2 text-xs text-[#dddddd] hover:text-white hover:bg-[#202020] transition-colors cursor-pointer flex items-center gap-2.5"
-                              >
-                                <MinusCircle className="h-3.5 w-3.5 text-[#888888]" />
-                                <span>Subtract Time</span>
-                              </button>
-
-                              {/* Reset HWID */}
-                              <button
-                                type="button"
-                                onClick={() => openResetHwidModal(user)}
-                                className="w-full text-left px-3.5 py-2 text-xs text-[#dddddd] hover:text-white hover:bg-[#202020] transition-colors cursor-pointer flex items-center gap-2.5"
-                              >
-                                <Laptop className="h-3.5 w-3.5 text-[#888888]" />
-                                <span>Reset HWID</span>
-                              </button>
-
-                              {/* Copy Info */}
-                              <button
-                                type="button"
-                                onClick={() => handleCopyInfo(user)}
-                                className="w-full text-left px-3.5 py-2 text-xs text-[#dddddd] hover:text-white hover:bg-[#202020] transition-colors cursor-pointer flex items-center gap-2.5"
-                              >
-                                <Copy className="h-3.5 w-3.5 text-[#888888]" />
-                                <span>Copy Info</span>
-                              </button>
-
-                              <div className="my-1 border-t border-[#222222]" />
-
-                              {/* Delete */}
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setOpenActionMenuId(null);
-                                  setActiveUser(user);
-                                  setIsDeleteModalOpen(true);
-                                }}
-                                className="w-full text-left px-3.5 py-2 text-xs text-rose-400 hover:text-rose-300 hover:bg-rose-950/20 transition-colors cursor-pointer flex items-center gap-2.5"
-                              >
-                                <Trash2 className="h-3.5 w-3.5 text-rose-400" />
-                                <span>Delete</span>
-                              </button>
-                            </div>
-                          )}
                         </td>
                       )}
                     </tr>
@@ -1347,6 +1371,183 @@ export default function UsersPage() {
           </div>
         </div>
       )}
+
+      {/* Floating Action Menu (Rendered outside table via Portal to avoid clipping) */}
+      {isMounted && actionMenuUser && menuCoords && typeof document !== 'undefined' &&
+        createPortal(
+          <div
+            ref={(node) => {
+              menuRef.current = node;
+              if (node && actionMenuAnchor) {
+                const refined = calculateMenuPosition(actionMenuAnchor, node);
+                setMenuCoords((prev) => {
+                  if (
+                    !prev ||
+                    prev.top !== refined.top ||
+                    prev.left !== refined.left ||
+                    prev.openAbove !== refined.openAbove
+                  ) {
+                    return refined;
+                  }
+                  return prev;
+                });
+              }
+            }}
+            style={{
+              position: 'fixed',
+              top: `${menuCoords.top}px`,
+              left: `${menuCoords.left}px`,
+            }}
+            className={`w-48 bg-[#141414] border border-[#282828] rounded-xl shadow-2xl py-1.5 z-[60] text-left animate-in fade-in-0 zoom-in-95 ${
+              menuCoords.openAbove ? 'origin-bottom-right' : 'origin-top-right'
+            }`}
+          >
+            {/* Edit User */}
+            <button
+              type="button"
+              onClick={() => {
+                const target = actionMenuUser;
+                closeActionMenu();
+                setActiveUser(target);
+                setIsEditModalOpen(true);
+              }}
+              className="w-full text-left px-3.5 py-2 text-xs text-[#dddddd] hover:text-white hover:bg-[#202020] transition-colors cursor-pointer flex items-center gap-2.5"
+            >
+              <Edit3 className="h-3.5 w-3.5 text-[#888888]" />
+              <span>Edit User</span>
+            </button>
+
+            {/* Deselect */}
+            <button
+              type="button"
+              onClick={() => {
+                const target = actionMenuUser;
+                closeActionMenu();
+                setSelectedUserIds((prev) => prev.filter((id) => id !== target.id));
+              }}
+              className="w-full text-left px-3.5 py-2 text-xs text-[#dddddd] hover:text-white hover:bg-[#202020] transition-colors cursor-pointer flex items-center gap-2.5"
+            >
+              <SquareX className="h-3.5 w-3.5 text-[#888888]" />
+              <span>Deselect</span>
+            </button>
+
+            {/* Ban User */}
+            <button
+              type="button"
+              onClick={() => {
+                const target = actionMenuUser;
+                closeActionMenu();
+                setActiveUser(target);
+                setIsBanModalOpen(true);
+              }}
+              className="w-full text-left px-3.5 py-2 text-xs text-[#dddddd] hover:text-white hover:bg-[#202020] transition-colors cursor-pointer flex items-center gap-2.5"
+            >
+              <Ban className="h-3.5 w-3.5 text-[#888888]" />
+              <span>{actionMenuUser.status === 'suspended' ? 'Unban User' : 'Ban User'}</span>
+            </button>
+
+            {/* Pause / Resume */}
+            <button
+              type="button"
+              onClick={() => {
+                const target = actionMenuUser;
+                closeActionMenu();
+                setActiveUser(target);
+                setIsPauseModalOpen(true);
+              }}
+              className="w-full text-left px-3.5 py-2 text-xs text-[#dddddd] hover:text-white hover:bg-[#202020] transition-colors cursor-pointer flex items-center gap-2.5"
+            >
+              {actionMenuUser.status === 'disabled' ? (
+                <>
+                  <PlayCircle className="h-3.5 w-3.5 text-emerald-400" />
+                  <span>Resume</span>
+                </>
+              ) : (
+                <>
+                  <PauseCircle className="h-3.5 w-3.5 text-[#888888]" />
+                  <span>Pause</span>
+                </>
+              )}
+            </button>
+
+            {/* Extend Time */}
+            <button
+              type="button"
+              onClick={() => {
+                const target = actionMenuUser;
+                closeActionMenu();
+                setActiveUser(target);
+                setIsExtendTimeOpen(true);
+              }}
+              className="w-full text-left px-3.5 py-2 text-xs text-[#dddddd] hover:text-white hover:bg-[#202020] transition-colors cursor-pointer flex items-center gap-2.5"
+            >
+              <Clock className="h-3.5 w-3.5 text-[#888888]" />
+              <span>Extend Time</span>
+            </button>
+
+            {/* Subtract Time */}
+            <button
+              type="button"
+              onClick={() => {
+                const target = actionMenuUser;
+                closeActionMenu();
+                setActiveUser(target);
+                setIsSubtractTimeOpen(true);
+              }}
+              className="w-full text-left px-3.5 py-2 text-xs text-[#dddddd] hover:text-white hover:bg-[#202020] transition-colors cursor-pointer flex items-center gap-2.5"
+            >
+              <MinusCircle className="h-3.5 w-3.5 text-[#888888]" />
+              <span>Subtract Time</span>
+            </button>
+
+            {/* Reset HWID */}
+            <button
+              type="button"
+              onClick={() => {
+                const target = actionMenuUser;
+                closeActionMenu();
+                openResetHwidModal(target);
+              }}
+              className="w-full text-left px-3.5 py-2 text-xs text-[#dddddd] hover:text-white hover:bg-[#202020] transition-colors cursor-pointer flex items-center gap-2.5"
+            >
+              <Laptop className="h-3.5 w-3.5 text-[#888888]" />
+              <span>Reset HWID</span>
+            </button>
+
+            {/* Copy Info */}
+            <button
+              type="button"
+              onClick={() => {
+                const target = actionMenuUser;
+                closeActionMenu();
+                handleCopyInfo(target);
+              }}
+              className="w-full text-left px-3.5 py-2 text-xs text-[#dddddd] hover:text-white hover:bg-[#202020] transition-colors cursor-pointer flex items-center gap-2.5"
+            >
+              <Copy className="h-3.5 w-3.5 text-[#888888]" />
+              <span>Copy Info</span>
+            </button>
+
+            <div className="my-1 border-t border-[#222222]" />
+
+            {/* Delete */}
+            <button
+              type="button"
+              onClick={() => {
+                const target = actionMenuUser;
+                closeActionMenu();
+                setActiveUser(target);
+                setIsDeleteModalOpen(true);
+              }}
+              className="w-full text-left px-3.5 py-2 text-xs text-rose-400 hover:text-rose-300 hover:bg-rose-950/20 transition-colors cursor-pointer flex items-center gap-2.5"
+            >
+              <Trash2 className="h-3.5 w-3.5 text-rose-400" />
+              <span>Delete</span>
+            </button>
+          </div>,
+          document.body
+        )
+      }
     </div>
   );
 }
