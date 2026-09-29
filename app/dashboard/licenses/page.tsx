@@ -9,6 +9,8 @@ import LicenseDetailsModal, { type LicenseDetailData } from '@/components/licens
 import RevokeLicenseModal from '@/components/revoke-license-modal';
 import DeleteLicenseModal from '@/components/delete-license-modal';
 import ResetHwidModal from '@/components/reset-hwid-modal';
+import EditLicenseModal from '@/components/edit-license-modal';
+import AssignLicenseModal from '@/components/assign-license-modal';
 import { maskLicenseKey } from '@/lib/user-service';
 import {
   KeyRound,
@@ -31,7 +33,10 @@ import {
   ExternalLink,
   ShieldCheck,
   CheckCircle2,
-  RotateCcw
+  RotateCcw,
+  UserCheck,
+  UserX,
+  Sliders
 } from 'lucide-react';
 
 interface Application {
@@ -63,6 +68,9 @@ export default function LicensesPage() {
   const [activeRevokeLicense, setActiveRevokeLicense] = useState<LicenseDetailData | null>(null);
   const [activeDeleteLicense, setActiveDeleteLicense] = useState<LicenseDetailData | null>(null);
   const [activeResetHwidLicense, setActiveResetHwidLicense] = useState<LicenseDetailData | null>(null);
+  const [activeAssignLicense, setActiveAssignLicense] = useState<LicenseDetailData | null>(null);
+  const [activeEditLicense, setActiveEditLicense] = useState<LicenseDetailData | null>(null);
+  const [unassigningLicenseId, setUnassigningLicenseId] = useState<string | null>(null);
 
   // Inline copy state for license key
   const [copiedKeyId, setCopiedKeyId] = useState<string | null>(null);
@@ -158,6 +166,31 @@ export default function LicensesPage() {
       const prevPage = currentPage - 1;
       setCurrentPage(prevPage);
       fetchLicenses(prevPage);
+    }
+  }
+
+  async function handleUnassignUser(license: LicenseDetailData) {
+    const userDisplay = license.assigned_user?.email || license.note || 'User';
+    if (!confirm(`Are you sure you want to unassign "${userDisplay}" from this license?`)) {
+      return;
+    }
+    setUnassigningLicenseId(license.id);
+    try {
+      const res = await fetch(`/api/licenses/${license.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'unassign_user' })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to unassign user');
+      setLicenses((prev) =>
+        prev.map((l) => (l.id === license.id ? { ...l, note: null, assigned_user: null } : l))
+      );
+      showToast('User unassigned from license successfully.');
+    } catch (err: any) {
+      showToast(err.message || 'Error unassigning user');
+    } finally {
+      setUnassigningLicenseId(null);
     }
   }
 
@@ -486,6 +519,7 @@ export default function LicensesPage() {
                 </th>
                 <th className="px-5 py-3.5">License Key</th>
                 <th className="px-4 py-3.5">Application</th>
+                <th className="px-4 py-3.5">Assigned User</th>
                 <th className="px-4 py-3.5">Subscription</th>
                 <th className="px-4 py-3.5">Status</th>
                 <th className="px-4 py-3.5">Created</th>
@@ -500,7 +534,7 @@ export default function LicensesPage() {
             <tbody className="divide-y divide-[#1e1e1e] text-xs">
               {isLoading ? (
                 <tr>
-                  <td colSpan={12} className="px-5 py-12 text-center text-[#727275]">
+                  <td colSpan={13} className="px-5 py-12 text-center text-[#727275]">
                     <div className="flex flex-col items-center justify-center gap-2">
                       <div className="h-6 w-6 border-2 border-[#ff5f15] border-t-transparent rounded-full animate-spin" />
                       <span>Loading licenses...</span>
@@ -509,7 +543,7 @@ export default function LicensesPage() {
                 </tr>
               ) : licenses.length === 0 ? (
                 <tr>
-                  <td colSpan={12} className="px-5 py-12 text-center text-[#727275]">
+                  <td colSpan={13} className="px-5 py-12 text-center text-[#727275]">
                     <div className="flex flex-col items-center justify-center gap-2">
                       <KeyRound className="h-8 w-8 text-[#444444]" />
                       <p className="text-sm font-medium text-zinc-400">No licenses found</p>
@@ -576,6 +610,56 @@ export default function LicensesPage() {
                           <span className="text-xs font-mono text-[#555555]">
                             {lic.application_id.slice(0, 8)}...
                           </span>
+                        )}
+                      </td>
+
+                      {/* Assigned User */}
+                      <td className="px-4 py-3.5">
+                        {lic.assigned_user ? (
+                          <div className="flex items-center gap-1.5">
+                            <span
+                              className="text-xs font-semibold text-emerald-400 bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-800/40 max-w-[140px] truncate"
+                              title={lic.assigned_user.email}
+                            >
+                              {lic.assigned_user.email}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleUnassignUser(lic)}
+                              disabled={unassigningLicenseId === lic.id}
+                              className="p-1 rounded text-[#777777] hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
+                              title="Unassign User"
+                            >
+                              <UserX className="h-3 w-3" />
+                            </button>
+                          </div>
+                        ) : lic.note ? (
+                          <div className="flex items-center gap-1.5">
+                            <span
+                              className="text-xs font-mono text-[#bbbbbb] bg-[#1a1a1a] px-2 py-0.5 rounded border border-[#282828] max-w-[140px] truncate"
+                              title={lic.note}
+                            >
+                              {lic.note}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleUnassignUser(lic)}
+                              disabled={unassigningLicenseId === lic.id}
+                              className="p-1 rounded text-[#777777] hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
+                              title="Unassign / Clear Note"
+                            >
+                              <UserX className="h-3 w-3" />
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setActiveAssignLicense(lic)}
+                            className="inline-flex items-center gap-1 text-[11px] text-[#ff5f15] hover:text-[#e0500e] font-medium transition-colors cursor-pointer"
+                          >
+                            <UserCheck className="h-3 w-3" />
+                            <span>Assign</span>
+                          </button>
                         )}
                       </td>
 
@@ -677,6 +761,41 @@ export default function LicensesPage() {
                             <Eye className="h-3.5 w-3.5 text-[#008cff]" />
                             <span className="hidden sm:inline">Details</span>
                           </button>
+
+                          {/* Edit License */}
+                          <button
+                            type="button"
+                            onClick={() => setActiveEditLicense(lic)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-[#1a1a1a] hover:bg-[#252525] border border-[#2a2a2a] text-xs font-medium text-amber-400 transition-colors cursor-pointer"
+                            title="Edit License"
+                          >
+                            <Sliders className="h-3.5 w-3.5" />
+                            <span className="hidden sm:inline">Edit</span>
+                          </button>
+
+                          {/* Assign / Unassign User */}
+                          {lic.assigned_user || lic.note ? (
+                            <button
+                              type="button"
+                              onClick={() => handleUnassignUser(lic)}
+                              disabled={unassigningLicenseId === lic.id}
+                              className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg bg-red-950/20 hover:bg-red-950/40 border border-red-900/40 text-xs font-medium text-red-400 transition-colors cursor-pointer"
+                              title="Unassign User"
+                            >
+                              <UserX className="h-3.5 w-3.5" />
+                              <span className="hidden sm:inline">Unassign</span>
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => setActiveAssignLicense(lic)}
+                              className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg bg-[#ff5f15]/10 hover:bg-[#ff5f15]/20 border border-[#ff5f15]/30 text-xs font-medium text-[#ff5f15] transition-colors cursor-pointer"
+                              title="Assign User"
+                            >
+                              <UserCheck className="h-3.5 w-3.5" />
+                              <span className="hidden sm:inline">Assign</span>
+                            </button>
+                          )}
 
                           {/* Reset HWID */}
                           {lic.status !== 'revoked' ? (
@@ -930,6 +1049,38 @@ export default function LicensesPage() {
               }
             : null
         }
+      />
+
+      <AssignLicenseModal
+        isOpen={Boolean(activeAssignLicense)}
+        onClose={() => setActiveAssignLicense(null)}
+        license={activeAssignLicense}
+        onLicenseAssigned={(updatedLic) => {
+          setLicenses((prev) =>
+            prev.map((l) => (l.id === updatedLic.id ? { ...l, ...updatedLic } : l))
+          );
+          if (activeDetailsLicense && activeDetailsLicense.id === updatedLic.id) {
+            setActiveDetailsLicense(updatedLic);
+          }
+          showToast(`License successfully assigned to ${updatedLic.assigned_user?.email || updatedLic.note}`);
+          fetchLicenses(currentPage);
+        }}
+      />
+
+      <EditLicenseModal
+        isOpen={Boolean(activeEditLicense)}
+        onClose={() => setActiveEditLicense(null)}
+        license={activeEditLicense}
+        onLicenseUpdated={(updatedLic) => {
+          setLicenses((prev) =>
+            prev.map((l) => (l.id === updatedLic.id ? { ...l, ...updatedLic } : l))
+          );
+          if (activeDetailsLicense && activeDetailsLicense.id === updatedLic.id) {
+            setActiveDetailsLicense(updatedLic);
+          }
+          showToast('License updated successfully');
+          fetchLicenses(currentPage);
+        }}
       />
     </div>
   );

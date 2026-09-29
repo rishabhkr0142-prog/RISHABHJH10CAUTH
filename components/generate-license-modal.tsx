@@ -9,11 +9,11 @@ import {
   AlertCircle,
   Copy,
   Check,
-  Sparkles,
-  Layers,
   CheckCircle2,
   Clock,
-  Laptop
+  Laptop,
+  Shield,
+  Coins
 } from 'lucide-react';
 
 export interface ApplicationOption {
@@ -49,6 +49,8 @@ export default function GenerateLicenseModal({
   const [numbers, setNumbers] = useState(true);
   const [note, setNote] = useState('');
   const [allowedDevices, setAllowedDevices] = useState('1');
+  const [hwidLock, setHwidLock] = useState(true);
+  const [generateToken, setGenerateToken] = useState(false);
   const [appUsers, setAppUsers] = useState<{ id: string; email: string; username: string | null }[]>([]);
   const [selectedUserEmail, setSelectedUserEmail] = useState('');
 
@@ -59,6 +61,7 @@ export default function GenerateLicenseModal({
     count: number;
     keys: string[];
     subscription: string;
+    tokens?: string[];
   } | null>(null);
   const [copiedKeyIndex, setCopiedKeyIndex] = useState<number | null>(null);
   const [copiedAll, setCopiedAll] = useState(false);
@@ -81,6 +84,8 @@ export default function GenerateLicenseModal({
       setCopiedKeyIndex(null);
       setNote('');
       setSelectedUserEmail('');
+      setHwidLock(true);
+      setGenerateToken(false);
       if (selectedApplicationId) {
         setAppId(selectedApplicationId);
       }
@@ -105,9 +110,9 @@ export default function GenerateLicenseModal({
 
   if (!isOpen) return null;
 
-  function handleQuickLength(days: number) {
-    setSubscriptionLength(String(days));
-    setSubscriptionUnit('days');
+  function handleQuickExpiry(val: number, unit: 'hours' | 'days' | 'months' | 'years') {
+    setSubscriptionLength(String(val));
+    setSubscriptionUnit(unit);
   }
 
   function handleQuickMask(preset: string) {
@@ -213,10 +218,22 @@ export default function GenerateLicenseModal({
         throw new Error(data.error || 'Failed to generate licenses');
       }
 
+      // If token generation requested, generate license tokens
+      let generatedTokens: string[] | undefined;
+      if (generateToken && data.generatedKeys) {
+        generatedTokens = data.generatedKeys.map(() => {
+          const randHex = Array.from(crypto.getRandomValues(new Uint8Array(16)))
+            .map((b) => b.toString(16).padStart(2, '0'))
+            .join('');
+          return `lic_tok_${randHex}`;
+        });
+      }
+
       setGeneratedResult({
         count: data.count || data.generatedKeys?.length || 0,
         keys: data.generatedKeys || [],
-        subscription
+        subscription,
+        tokens: generatedTokens
       });
 
       if (onLicensesGenerated && data.licenses) {
@@ -245,7 +262,7 @@ export default function GenerateLicenseModal({
               <p className="text-xs text-[#888888]">
                 {generatedResult
                   ? `${generatedResult.count} new license keys generated and ready to distribute.`
-                  : 'Define mask, duration, devices, and character set to mint software licenses.'}
+                  : 'Define application, duration, devices, and subscription to create software licenses.'}
               </p>
             </div>
           </div>
@@ -281,55 +298,54 @@ export default function GenerateLicenseModal({
                     </p>
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={handleCopyAll}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-600 text-black text-xs font-semibold shadow-xs transition-colors cursor-pointer"
-                >
-                  {copiedAll ? (
-                    <>
-                      <Check className="h-3.5 w-3.5" />
-                      <span>Copied All!</span>
-                    </>
-                  ) : (
-                    <>
-                      <Copy className="h-3.5 w-3.5" />
-                      <span>Copy All</span>
-                    </>
-                  )}
-                </button>
+                {generatedResult.keys.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={handleCopyAll}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#181818] hover:bg-[#222222] border border-[#2d2d2d] text-xs font-medium text-white transition-colors cursor-pointer"
+                  >
+                    {copiedAll ? (
+                      <>
+                        <Check className="h-3.5 w-3.5 text-emerald-400" />
+                        <span className="text-emerald-400">Copied All</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="h-3.5 w-3.5 text-[#ff5f15]" />
+                        <span>Copy All</span>
+                      </>
+                    )}
+                  </button>
+                )}
               </div>
 
-              {/* License Keys List */}
+              {/* List of generated keys */}
               <div className="space-y-2">
-                <div className="flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-[#888888] px-1">
-                  <span>Generated Keys</span>
-                  <span>{generatedResult.keys.length} item{generatedResult.keys.length > 1 ? 's' : ''}</span>
-                </div>
-                <div className="max-h-72 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
+                <label className="block text-xs font-semibold text-[#888888] uppercase tracking-wider">
+                  Generated License Keys
+                </label>
+                <div className="max-h-60 overflow-y-auto space-y-2 rounded-xl border border-[#242424] bg-[#111111] p-3 divide-y divide-[#1e1e1e]">
                   {generatedResult.keys.map((key, idx) => (
                     <div
                       key={key + idx}
-                      className="flex items-center justify-between px-3.5 py-2.5 rounded-xl bg-[#111111] border border-[#262626] hover:border-[#383838] transition-colors group"
+                      className="pt-2 first:pt-0 flex items-center justify-between gap-3 font-mono text-xs text-white"
                     >
-                      <span className="font-mono text-sm text-white font-medium tracking-wider select-all">
-                        {key}
-                      </span>
+                      <div className="flex items-center gap-2 truncate">
+                        <span className="text-[11px] text-[#555555] shrink-0">#{idx + 1}</span>
+                        <span className="select-all font-semibold text-zinc-100 tracking-wide truncate">
+                          {key}
+                        </span>
+                      </div>
                       <button
                         type="button"
                         onClick={() => handleCopySingle(key, idx)}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[#1a1a1a] hover:bg-[#252525] border border-[#303030] text-xs text-[#cccccc] hover:text-white transition-colors cursor-pointer"
+                        className="shrink-0 p-1.5 rounded text-[#777777] hover:text-white hover:bg-[#1f1f1f] transition-colors cursor-pointer"
+                        title="Copy license key"
                       >
                         {copiedKeyIndex === idx ? (
-                          <>
-                            <Check className="h-3 w-3 text-emerald-400" />
-                            <span className="text-emerald-400 text-[11px]">Copied</span>
-                          </>
+                          <Check className="h-4 w-4 text-emerald-400" />
                         ) : (
-                          <>
-                            <Copy className="h-3 w-3 text-[#ff5f15]" />
-                            <span className="text-[11px]">Copy</span>
-                          </>
+                          <Copy className="h-4 w-4" />
                         )}
                       </button>
                     </div>
@@ -361,25 +377,49 @@ export default function GenerateLicenseModal({
           ) : (
             /* VIEW B: Generate License Form */
             <form onSubmit={handleSubmit} className="space-y-4">
-              {/* Application Selection (Multi-app support) */}
+              {/* Application Selection */}
               <div>
                 <label className="block text-xs font-semibold text-[#888888] uppercase tracking-wider mb-1.5">
-                  Application *
+                  Target Application *
                 </label>
-                <div className="relative">
-                  <select
-                    value={appId}
-                    onChange={(e) => setAppId(e.target.value)}
-                    required
-                    className="w-full px-3.5 py-2.5 rounded-xl bg-[#111111] border border-[#282828] text-xs text-white focus:outline-none focus:border-[#ff5f15]/50 transition-colors cursor-pointer"
-                  >
-                    {applications.map((app) => (
-                      <option key={app.id} value={app.id}>
-                        {app.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                <select
+                  value={appId}
+                  onChange={(e) => setAppId(e.target.value)}
+                  required
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-[#111111] border border-[#282828] text-xs text-white focus:outline-none focus:border-[#ff5f15]/50 transition-colors cursor-pointer"
+                >
+                  {applications.map((app) => (
+                    <option key={app.id} value={app.id}>
+                      {app.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* User / Account Assignment (Optional) */}
+              <div>
+                <label className="block text-xs font-semibold text-[#888888] uppercase tracking-wider mb-1.5">
+                  User / Account (Optional)
+                </label>
+                <select
+                  value={selectedUserEmail}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setSelectedUserEmail(val);
+                    if (val) setNote(val);
+                  }}
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-[#111111] border border-[#282828] text-xs text-white focus:outline-none focus:border-[#ff5f15]/50 transition-colors cursor-pointer"
+                >
+                  <option value="">-- Unassigned (Mint Standalone License) --</option>
+                  {appUsers.map((u) => (
+                    <option key={u.id} value={u.email}>
+                      {u.email} {u.username ? `(@${u.username})` : ''}
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1 text-[11px] text-[#666666]">
+                  Creating a license only creates a license. It does not create a user.
+                </p>
               </div>
 
               {/* Subscription * */}
@@ -401,45 +441,119 @@ export default function GenerateLicenseModal({
                 </select>
               </div>
 
-              {/* License Mask * */}
+              {/* Expiry * with Quick Presets */}
               <div>
                 <div className="flex items-center justify-between mb-1.5">
                   <label className="block text-xs font-semibold text-[#888888] uppercase tracking-wider">
-                    License Mask *
+                    Expiry *
                   </label>
                   <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => handleQuickExpiry(1, 'hours')}
+                      className={`text-[10px] font-mono px-2 py-0.5 rounded border transition-colors cursor-pointer ${
+                        subscriptionLength === '1' && subscriptionUnit === 'hours'
+                          ? 'bg-[#ff5f15]/20 text-[#ff5f15] border-[#ff5f15]/40'
+                          : 'bg-[#181818] text-[#888888] border-[#282828] hover:text-white'
+                      }`}
+                    >
+                      1H
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleQuickExpiry(1, 'days')}
+                      className={`text-[10px] font-mono px-2 py-0.5 rounded border transition-colors cursor-pointer ${
+                        subscriptionLength === '1' && subscriptionUnit === 'days'
+                          ? 'bg-[#ff5f15]/20 text-[#ff5f15] border-[#ff5f15]/40'
+                          : 'bg-[#181818] text-[#888888] border-[#282828] hover:text-white'
+                      }`}
+                    >
+                      1D
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleQuickExpiry(7, 'days')}
+                      className={`text-[10px] font-mono px-2 py-0.5 rounded border transition-colors cursor-pointer ${
+                        subscriptionLength === '7' && subscriptionUnit === 'days'
+                          ? 'bg-[#ff5f15]/20 text-[#ff5f15] border-[#ff5f15]/40'
+                          : 'bg-[#181818] text-[#888888] border-[#282828] hover:text-white'
+                      }`}
+                    >
+                      7D
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleQuickExpiry(1, 'months')}
+                      className={`text-[10px] font-mono px-2 py-0.5 rounded border transition-colors cursor-pointer ${
+                        subscriptionLength === '1' && subscriptionUnit === 'months'
+                          ? 'bg-[#ff5f15]/20 text-[#ff5f15] border-[#ff5f15]/40'
+                          : 'bg-[#181818] text-[#888888] border-[#282828] hover:text-white'
+                      }`}
+                    >
+                      1MO
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleQuickExpiry(1, 'years')}
+                      className={`text-[10px] font-mono px-2 py-0.5 rounded border transition-colors cursor-pointer ${
+                        subscriptionLength === '1' && subscriptionUnit === 'years'
+                          ? 'bg-[#ff5f15]/20 text-[#ff5f15] border-[#ff5f15]/40'
+                          : 'bg-[#181818] text-[#888888] border-[#282828] hover:text-white'
+                      }`}
+                    >
+                      1Y
+                    </button>
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <input
+                    type="number"
+                    min="1"
+                    value={subscriptionLength}
+                    onChange={(e) => setSubscriptionLength(e.target.value)}
+                    required
+                    placeholder="30"
+                    className="w-3/5 px-3.5 py-2.5 rounded-xl bg-[#111111] border border-[#282828] text-xs text-white placeholder-[#555555] focus:outline-none focus:border-[#ff5f15]/50 transition-colors"
+                  />
+                  <select
+                    value={subscriptionUnit}
+                    onChange={(e) => setSubscriptionUnit(e.target.value as any)}
+                    className="w-2/5 px-2 py-2.5 rounded-xl bg-[#111111] border border-[#282828] text-xs text-white focus:outline-none focus:border-[#ff5f15]/50 transition-colors cursor-pointer"
+                  >
+                    <option value="hours">Hours</option>
+                    <option value="days">Days</option>
+                    <option value="months">Months</option>
+                    <option value="years">Years</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* License Mask & Amount */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                {/* Mask */}
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="block text-xs font-semibold text-[#888888] uppercase tracking-wider">
+                      Mask *
+                    </label>
                     <button
                       type="button"
                       onClick={() => handleQuickMask('JH10C-XXXX-XXXX')}
                       className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-[#1c1c1c] border border-[#282828] text-[#888888] hover:text-white"
                     >
-                      JH10C-XXXX-XXXX
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleQuickMask('XXXX-XXXX-XXXX-XXXX')}
-                      className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-[#1c1c1c] border border-[#282828] text-[#888888] hover:text-white"
-                    >
-                      4x4
+                      Preset
                     </button>
                   </div>
+                  <input
+                    type="text"
+                    value={licenseMask}
+                    onChange={(e) => setLicenseMask(e.target.value)}
+                    required
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-[#111111] border border-[#282828] font-mono text-xs text-white placeholder-[#555555] focus:outline-none focus:border-[#ff5f15]/50 transition-colors"
+                  />
                 </div>
-                <input
-                  type="text"
-                  value={licenseMask}
-                  onChange={(e) => setLicenseMask(e.target.value)}
-                  placeholder="JH10C-XXXX-XXXX"
-                  required
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-[#111111] border border-[#282828] font-mono text-xs text-white placeholder-[#555555] focus:outline-none focus:border-[#ff5f15]/50 transition-colors"
-                />
-                <p className="mt-1 text-[11px] text-[#666666]">
-                  Each <code className="text-[#ff5f15]">X</code> character is replaced with a random character from the selected set.
-                </p>
-              </div>
 
-              {/* Amount * and Subscription Length * side-by-side */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                {/* Amount * */}
+                {/* Amount */}
                 <div>
                   <label className="block text-xs font-semibold text-[#888888] uppercase tracking-wider mb-1.5">
                     Amount *
@@ -451,185 +565,86 @@ export default function GenerateLicenseModal({
                     value={amount}
                     onChange={(e) => setAmount(e.target.value)}
                     required
-                    placeholder="1"
                     className="w-full px-3.5 py-2.5 rounded-xl bg-[#111111] border border-[#282828] text-xs text-white placeholder-[#555555] focus:outline-none focus:border-[#ff5f15]/50 transition-colors"
                   />
-                  <p className="mt-1 text-[11px] text-[#666666]">Number of unique licenses (max 250).</p>
-                </div>
-
-                {/* Subscription Length * & Unit */}
-                <div>
-                  <label className="block text-xs font-semibold text-[#888888] uppercase tracking-wider mb-1.5">
-                    Subscription Length *
-                  </label>
-                  <div className="flex gap-2">
-                    <input
-                      type="number"
-                      min="1"
-                      value={subscriptionLength}
-                      onChange={(e) => setSubscriptionLength(e.target.value)}
-                      required
-                      placeholder="30"
-                      className="w-3/5 px-3.5 py-2.5 rounded-xl bg-[#111111] border border-[#282828] text-xs text-white placeholder-[#555555] focus:outline-none focus:border-[#ff5f15]/50 transition-colors"
-                    />
-                    <select
-                      value={subscriptionUnit}
-                      onChange={(e) => setSubscriptionUnit(e.target.value as any)}
-                      className="w-2/5 px-2 py-2.5 rounded-xl bg-[#111111] border border-[#282828] text-xs text-white focus:outline-none focus:border-[#ff5f15]/50 transition-colors cursor-pointer"
-                    >
-                      <option value="days">Days</option>
-                      <option value="hours">Hours</option>
-                      <option value="months">Months</option>
-                      <option value="years">Years</option>
-                    </select>
-                  </div>
-                  {/* Quick length presets */}
-                  <div className="flex items-center gap-1.5 mt-1.5">
-                    {[7, 30, 90, 365].map((d) => (
-                      <button
-                        key={d}
-                        type="button"
-                        onClick={() => handleQuickLength(d)}
-                        className={`flex-1 py-0.5 rounded text-[10px] font-mono border transition-colors cursor-pointer ${
-                          subscriptionLength === String(d) && subscriptionUnit === 'days'
-                            ? 'bg-[#ff5f15]/20 text-[#ff5f15] border-[#ff5f15]/40'
-                            : 'bg-[#181818] text-[#777777] border-[#262626] hover:text-white'
-                        }`}
-                      >
-                        {d}D
-                      </button>
-                    ))}
-                  </div>
                 </div>
               </div>
 
-              {/* Character Set * */}
+              {/* Allowed Devices (Multi-HWID) */}
               <div>
                 <label className="block text-xs font-semibold text-[#888888] uppercase tracking-wider mb-1.5">
-                  Character Set *
+                  Allowed Devices (Multi-HWID)
                 </label>
-                <div className="grid grid-cols-3 gap-2.5">
-                  <label className="flex items-center gap-2 p-2.5 rounded-xl bg-[#111111] border border-[#282828] hover:border-[#383838] transition-colors cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={lowercase}
-                      onChange={(e) => setLowercase(e.target.checked)}
-                      className="rounded accent-[#ff5f15] cursor-pointer"
-                    />
-                    <span className="text-xs font-mono text-zinc-300">az Lowercase</span>
-                  </label>
-
-                  <label className="flex items-center gap-2 p-2.5 rounded-xl bg-[#111111] border border-[#282828] hover:border-[#383838] transition-colors cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={uppercase}
-                      onChange={(e) => setUppercase(e.target.checked)}
-                      className="rounded accent-[#ff5f15] cursor-pointer"
-                    />
-                    <span className="text-xs font-mono text-zinc-300">AZ Uppercase</span>
-                  </label>
-
-                  <label className="flex items-center gap-2 p-2.5 rounded-xl bg-[#111111] border border-[#282828] hover:border-[#383838] transition-colors cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={numbers}
-                      onChange={(e) => setNumbers(e.target.checked)}
-                      className="rounded accent-[#ff5f15] cursor-pointer"
-                    />
-                    <span className="text-xs font-mono text-zinc-300">0-9 Numbers</span>
-                  </label>
-                </div>
+                <select
+                  value={allowedDevices}
+                  onChange={(e) => setAllowedDevices(e.target.value)}
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-[#111111] border border-[#282828] text-xs text-white focus:outline-none focus:border-[#ff5f15]/50 transition-colors cursor-pointer"
+                >
+                  <option value="1">1 Device (Default)</option>
+                  <option value="2">2 Devices</option>
+                  <option value="3">3 Devices</option>
+                  <option value="5">5 Devices</option>
+                  <option value="10">10 Devices</option>
+                  <option value="999">Unlimited Devices</option>
+                </select>
               </div>
 
-              {/* Allowed Devices (Multi-HWID) & Note */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                {/* Allowed Devices (Multi-HWID) */}
-                <div>
-                  <label className="block text-xs font-semibold text-[#888888] uppercase tracking-wider mb-1.5">
-                    Allowed Devices (Multi-HWID)
-                  </label>
+              {/* HWID Lock & Token Options */}
+              <div className="space-y-2 pt-1">
+                <label className="flex items-center gap-2 p-2.5 rounded-xl bg-[#111111] border border-[#282828] hover:border-[#383838] transition-colors cursor-pointer">
                   <input
-                    type="number"
-                    min="1"
-                    max="100"
-                    value={allowedDevices}
-                    onChange={(e) => setAllowedDevices(e.target.value)}
-                    required
-                    placeholder="1"
-                    className="w-full px-3.5 py-2.5 rounded-xl bg-[#111111] border border-[#282828] text-xs text-white placeholder-[#555555] focus:outline-none focus:border-[#ff5f15]/50 transition-colors"
+                    type="checkbox"
+                    checked={hwidLock}
+                    onChange={(e) => setHwidLock(e.target.checked)}
+                    className="rounded accent-[#ff5f15] cursor-pointer"
                   />
-                  <p className="mt-1 text-[11px] text-[#666666]">
-                    Max hardware IDs permitted per license.
-                  </p>
-                </div>
+                  <span className="text-xs text-zinc-300 font-medium">
+                    HWID Affected (Lock to Device)
+                  </span>
+                </label>
 
-                {/* Note / User Assignment */}
-                <div>
-                  <label className="block text-xs font-semibold text-[#888888] uppercase tracking-wider mb-1.5">
-                    Assign to User / Note (Optional)
-                  </label>
-                  {appUsers.length > 0 && (
-                    <select
-                      value={selectedUserEmail}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setSelectedUserEmail(val);
-                        if (val) setNote(val);
-                      }}
-                      className="w-full px-3.5 py-2 mb-2 rounded-xl bg-[#111111] border border-[#282828] text-xs text-white focus:outline-none focus:border-[#ff5f15]/50 transition-colors cursor-pointer"
-                    >
-                      <option value="">-- Choose User to Assign (Optional) --</option>
-                      {appUsers.map((u) => (
-                        <option key={u.id} value={u.email}>
-                          {u.email} {u.username ? `(@${u.username})` : ''}
-                        </option>
-                      ))}
-                    </select>
-                  )}
+                <label className="flex items-center gap-2 p-2.5 rounded-xl bg-[#111111] border border-[#282828] hover:border-[#383838] transition-colors cursor-pointer">
                   <input
-                    type="text"
-                    value={note}
-                    onChange={(e) => {
-                      setNote(e.target.value);
-                      if (selectedUserEmail && e.target.value !== selectedUserEmail) {
-                        setSelectedUserEmail('');
-                      }
-                    }}
-                    placeholder="User email or note description"
-                    className="w-full px-3.5 py-2.5 rounded-xl bg-[#111111] border border-[#282828] text-xs text-white placeholder-[#555555] focus:outline-none focus:border-[#ff5f15]/50 transition-colors"
+                    type="checkbox"
+                    checked={generateToken}
+                    onChange={(e) => setGenerateToken(e.target.checked)}
+                    className="rounded accent-[#ff5f15] cursor-pointer"
                   />
-                  <p className="mt-1 text-[11px] text-[#666666]">
-                    Set user email to link license to account, or enter custom note.
-                  </p>
-                </div>
+                  <span className="text-xs text-zinc-300 font-medium">
+                    Generate Token for this License
+                  </span>
+                </label>
               </div>
 
-              {/* Form Buttons */}
-              <div className="pt-4 border-t border-[#242424] flex items-center justify-end gap-3">
+              {/* Note */}
+              <div>
+                <label className="block text-xs font-semibold text-[#888888] uppercase tracking-wider mb-1.5">
+                  Note
+                </label>
+                <input
+                  type="text"
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  placeholder="Optional license description or customer note"
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-[#111111] border border-[#282828] text-xs text-white placeholder-[#555555] focus:outline-none focus:border-[#ff5f15]/50 transition-colors"
+                />
+              </div>
+
+              {/* Footer Actions */}
+              <div className="pt-3 border-t border-[#242424] flex items-center justify-end gap-3">
                 <button
                   type="button"
                   onClick={onClose}
-                  disabled={isSubmitting}
-                  className="px-4 py-2.5 rounded-xl bg-[#1c1c1c] hover:bg-[#252525] border border-[#2e2e2e] text-xs font-medium text-[#cccccc] hover:text-white transition-colors cursor-pointer"
+                  className="px-4 py-2 rounded-xl bg-[#1c1c1c] hover:bg-[#242424] border border-[#2c2c2c] text-xs font-medium text-white transition-colors cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={isSubmitting}
-                  className="inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl bg-[#ff5f15] hover:bg-[#e0500e] text-xs font-semibold text-white shadow-lg transition-all active:scale-[0.99] disabled:opacity-50 cursor-pointer"
+                  className="px-5 py-2 rounded-xl bg-[#ff5f15] hover:bg-[#e0500e] disabled:opacity-50 text-xs font-semibold text-white shadow-md transition-colors cursor-pointer"
                 >
-                  {isSubmitting ? (
-                    <>
-                      <div className="h-3.5 w-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                      <span>Generating...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Sparkles className="h-3.5 w-3.5" />
-                      <span>Generate</span>
-                    </>
-                  )}
+                  {isSubmitting ? 'Generating...' : 'Create License'}
                 </button>
               </div>
             </form>

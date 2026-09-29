@@ -113,6 +113,14 @@ export async function GET(request: Request) {
     const totalCount = count || 0;
     const now = new Date();
 
+    // Fetch users for target applications to resolve assigned user relationships
+    const { data: rawUsers } = await admin
+      .from('application_users')
+      .select('id, application_id, username, email')
+      .in('application_id', targetAppIds);
+
+    const appUsers = (rawUsers || []) as { id: string; application_id: string; username: string | null; email: string }[];
+
     // Enrich with application info and lazily flag expired licenses
     const enrichedLicenses = (licenseRows || []).map((lic: License) => {
       let currentStatus = lic.status;
@@ -144,6 +152,30 @@ export async function GET(request: Request) {
         }
       }
 
+      let assignedUser: { id: string; email: string; username: string | null } | null = null;
+      if (lic.note) {
+        const cleanNote = lic.note.toLowerCase().trim();
+        const found = appUsers.find((u) => {
+          if (u.application_id !== lic.application_id) return false;
+          const cleanEmail = u.email.toLowerCase().trim();
+          const cleanUsername = u.username?.toLowerCase().trim();
+          return (
+            cleanEmail === cleanNote ||
+            u.id === cleanNote ||
+            (cleanUsername && cleanNote === cleanUsername) ||
+            cleanNote.includes(cleanEmail) ||
+            cleanNote.includes(u.id)
+          );
+        });
+        if (found) {
+          assignedUser = {
+            id: found.id,
+            email: found.email,
+            username: found.username
+          };
+        }
+      }
+
       return {
         ...lic,
         status: currentStatus,
@@ -151,6 +183,7 @@ export async function GET(request: Request) {
         days_remaining_text: currentStatus === 'revoked' ? 'Revoked' : daysRemainingText,
         is_expired: isExpired,
         is_expiring_soon: currentStatus !== 'revoked' && isExpiringSoon,
+        assigned_user: assignedUser,
         application: appMap.get(lic.application_id) || null
       };
     });

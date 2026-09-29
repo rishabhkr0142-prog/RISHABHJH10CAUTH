@@ -1,142 +1,92 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Users, AlertCircle, Eye, EyeOff, X } from 'lucide-react';
+import { UserCog, AlertCircle, Eye, EyeOff, X } from 'lucide-react';
+import type { EnrichedUser } from '@/lib/user-service';
 
-export interface ApplicationOption {
-  id: string;
-  name: string;
-  client_id?: string;
-}
-
-interface CreateUserModalProps {
+interface EditUserModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onUserCreated?: (user: any) => void;
-  selectedApplicationId?: string;
-  applications?: ApplicationOption[];
+  user: EnrichedUser | null;
+  onUserUpdated?: (user: any) => void;
 }
 
-export default function CreateUserModal({
+export default function EditUserModal({
   isOpen,
   onClose,
-  onUserCreated,
-  selectedApplicationId,
-  applications: initialApplications
-}: CreateUserModalProps) {
-  const [apps, setApps] = useState<ApplicationOption[]>(initialApplications || []);
-  const [targetAppId, setTargetAppId] = useState<string>(selectedApplicationId || '');
-
-  // Pure User Fields
+  user,
+  onUserUpdated
+}: EditUserModalProps) {
   const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
   const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [status, setStatus] = useState<'active' | 'disabled' | 'suspended'>('active');
 
-  // UI States
   const [showPassword, setShowPassword] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // Load applications if not provided or empty
   useEffect(() => {
-    if (initialApplications && initialApplications.length > 0) {
-      setApps(initialApplications);
-      if (!targetAppId || !initialApplications.some((a) => a.id === targetAppId)) {
-        setTargetAppId(selectedApplicationId || initialApplications[0].id);
-      }
-    } else if (isOpen) {
-      fetch('/api/applications')
-        .then((res) => res.json())
-        .then((data) => {
-          if (data.applications && data.applications.length > 0) {
-            setApps(data.applications);
-            if (!targetAppId || !data.applications.some((a: any) => a.id === targetAppId)) {
-              setTargetAppId(selectedApplicationId || data.applications[0].id);
-            }
-          }
-        })
-        .catch((err) => console.error('Error fetching applications for modal:', err));
+    if (user) {
+      setUsername(user.username || '');
+      setEmail(user.email || '');
+      setStatus(user.status || 'active');
+      setPassword('');
+      setErrorMessage(null);
     }
-  }, [isOpen, initialApplications, selectedApplicationId]);
+  }, [user, isOpen]);
 
-  useEffect(() => {
-    if (selectedApplicationId) {
-      setTargetAppId(selectedApplicationId);
-    }
-  }, [selectedApplicationId]);
+  if (!isOpen || !user) return null;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (!user) return;
     setErrorMessage(null);
 
-    if (!targetAppId) {
-      setErrorMessage('Please select a target application.');
-      return;
-    }
-
-    if (!username.trim()) {
-      setErrorMessage('Username is required.');
-      return;
-    }
-
-    if (!password || password.length < 1 || password.length > 100) {
+    if (password && (password.length < 1 || password.length > 100)) {
       setErrorMessage('Password must be between 1 and 100 characters');
       return;
     }
 
-    // Auto-generate fallback email if left blank so database constraint is satisfied
-    const safeEmail =
-      email.trim() || `${username.trim().toLowerCase().replace(/[^a-z0-9]/g, '')}@app.local`;
-
     setIsSubmitting(true);
 
     try {
-      const res = await fetch('/api/users', {
-        method: 'POST',
+      const payload: any = {
+        username: username.trim() || null,
+        email: email.trim().toLowerCase(),
+        status
+      };
+      if (password) {
+        payload.password = password;
+      }
+
+      const res = await fetch(`/api/users/${user.id}`, {
+        method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          application_id: targetAppId,
-          applicationId: targetAppId,
-          username: username.trim(),
-          email: safeEmail,
-          password: password,
-          status
-        })
+        body: JSON.stringify(payload)
       });
 
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.error || 'Failed to create user');
+        throw new Error(data.error || 'Failed to update user');
       }
 
-      resetForm();
+      if (onUserUpdated) {
+        onUserUpdated({
+          ...user,
+          username: payload.username,
+          email: payload.email,
+          status: payload.status
+        });
+      }
+
       onClose();
-
-      if (onUserCreated) {
-        onUserCreated(data.user);
-      }
     } catch (err: any) {
-      setErrorMessage(err.message || 'Failed to create user');
+      setErrorMessage(err.message || 'Failed to update user');
     } finally {
       setIsSubmitting(false);
     }
   }
-
-  function resetForm() {
-    setUsername('');
-    setPassword('');
-    setEmail('');
-    setStatus('active');
-    setErrorMessage(null);
-  }
-
-  function handleClose() {
-    resetForm();
-    onClose();
-  }
-
-  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-xs overflow-y-auto">
@@ -145,15 +95,15 @@ export default function CreateUserModal({
         <div className="flex items-center justify-between px-6 py-5 border-b border-[#242424] bg-[#121212]/80">
           <div className="flex items-center gap-3">
             <div className="h-9 w-9 rounded-xl bg-[#1c1c1c] border border-[#2a2a2a] flex items-center justify-center text-[#ff5f15]">
-              <Users className="h-5 w-5" />
+              <UserCog className="h-5 w-5" />
             </div>
             <div>
-              <h2 className="text-base font-semibold text-white tracking-tight">Create User</h2>
-              <p className="text-xs text-[#888888]">Add a new user to your application</p>
+              <h2 className="text-base font-semibold text-white tracking-tight">Edit User</h2>
+              <p className="text-xs text-[#888888]">{user.email}</p>
             </div>
           </div>
           <button
-            onClick={handleClose}
+            onClick={onClose}
             className="p-1.5 rounded-lg text-[#777777] hover:text-white hover:bg-[#202020] transition-colors cursor-pointer"
           >
             <X className="h-5 w-5" />
@@ -169,52 +119,55 @@ export default function CreateUserModal({
             </div>
           )}
 
-          {/* Target Application * */}
+          {/* Application (Read-only) */}
           <div>
             <label className="block text-xs font-semibold text-[#888888] uppercase tracking-wider mb-1.5">
-              Target Application *
+              Application
             </label>
-            <select
-              value={targetAppId}
-              onChange={(e) => setTargetAppId(e.target.value)}
-              required
-              className="w-full px-3.5 py-2.5 rounded-xl bg-[#111111] border border-[#282828] text-xs text-white focus:outline-none focus:border-[#ff5f15]/50 transition-colors cursor-pointer"
-            >
-              {apps.map((app) => (
-                <option key={app.id} value={app.id}>
-                  {app.name}
-                </option>
-              ))}
-            </select>
+            <div className="w-full px-3.5 py-2.5 rounded-xl bg-[#111111] border border-[#282828] text-xs text-[#888888]">
+              {user.application?.name || 'Application'}
+            </div>
           </div>
 
-          {/* Username * */}
+          {/* Username */}
           <div>
             <label className="block text-xs font-semibold text-[#888888] uppercase tracking-wider mb-1.5">
-              Username *
+              Username
             </label>
             <input
               type="text"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              required
               placeholder="e.g. john_doe"
               className="w-full px-3.5 py-2.5 rounded-xl bg-[#111111] border border-[#282828] text-xs text-white placeholder-[#555555] focus:outline-none focus:border-[#ff5f15]/50 transition-colors"
             />
           </div>
 
-          {/* Password * */}
+          {/* Email */}
           <div>
             <label className="block text-xs font-semibold text-[#888888] uppercase tracking-wider mb-1.5">
-              Password *
+              Email *
+            </label>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              className="w-full px-3.5 py-2.5 rounded-xl bg-[#111111] border border-[#282828] text-xs text-white placeholder-[#555555] focus:outline-none focus:border-[#ff5f15]/50 transition-colors"
+            />
+          </div>
+
+          {/* New Password (Optional) */}
+          <div>
+            <label className="block text-xs font-semibold text-[#888888] uppercase tracking-wider mb-1.5">
+              New Password (Leave blank to keep current)
             </label>
             <div className="relative">
               <input
                 type={showPassword ? 'text' : 'password'}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                required
-                placeholder="Enter account password"
+                placeholder="Leave blank to keep unchanged"
                 className="w-full px-3.5 py-2.5 pr-10 rounded-xl bg-[#111111] border border-[#282828] text-xs text-white placeholder-[#555555] focus:outline-none focus:border-[#ff5f15]/50 transition-colors"
               />
               <button
@@ -227,27 +180,10 @@ export default function CreateUserModal({
             </div>
           </div>
 
-          {/* Email */}
-          <div>
-            <label className="block text-xs font-semibold text-[#888888] uppercase tracking-wider mb-1.5">
-              Email (Optional)
-            </label>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="e.g. user@example.com"
-              className="w-full px-3.5 py-2.5 rounded-xl bg-[#111111] border border-[#282828] text-xs text-white placeholder-[#555555] focus:outline-none focus:border-[#ff5f15]/50 transition-colors"
-            />
-            <p className="mt-1 text-[11px] text-[#666666]">
-              If left blank, an internal user handle email is assigned.
-            </p>
-          </div>
-
           {/* Status */}
           <div>
             <label className="block text-xs font-semibold text-[#888888] uppercase tracking-wider mb-1.5">
-              Status *
+              Account Status *
             </label>
             <select
               value={status}
@@ -264,7 +200,7 @@ export default function CreateUserModal({
           <div className="pt-3 border-t border-[#242424] flex items-center justify-end gap-3">
             <button
               type="button"
-              onClick={handleClose}
+              onClick={onClose}
               className="px-4 py-2 rounded-xl bg-[#1c1c1c] hover:bg-[#242424] border border-[#2c2c2c] text-xs font-medium text-white transition-colors cursor-pointer"
             >
               Cancel
@@ -274,7 +210,7 @@ export default function CreateUserModal({
               disabled={isSubmitting}
               className="px-5 py-2 rounded-xl bg-[#ff5f15] hover:bg-[#e0500e] disabled:opacity-50 text-xs font-semibold text-white shadow-md transition-colors cursor-pointer"
             >
-              {isSubmitting ? 'Creating...' : 'Create User'}
+              {isSubmitting ? 'Saving...' : 'Save Changes'}
             </button>
           </div>
         </form>

@@ -6,6 +6,7 @@ import { copyToClipboardSafe } from '@/lib/clipboard';
 import CreateUserModal from '@/components/create-user-modal';
 import UserDetailsModal from '@/components/user-details-modal';
 import ResetHwidModal from '@/components/reset-hwid-modal';
+import EditUserModal from '@/components/edit-user-modal';
 import { formatDateReliable, type EnrichedUser } from '@/lib/user-service';
 import { AVAILABLE_SUBSCRIPTIONS } from '@/lib/subscriptions';
 import {
@@ -34,7 +35,8 @@ import {
   Activity,
   Calendar,
   Sparkles,
-  RotateCcw
+  RotateCcw,
+  UserCog
 } from 'lucide-react';
 
 interface Application {
@@ -70,6 +72,7 @@ export default function UsersPage() {
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [activeUser, setActiveUser] = useState<EnrichedUser | null>(null);
   const [activeResetHwidUser, setActiveResetHwidUser] = useState<EnrichedUser | null>(null);
+  const [activeEditUser, setActiveEditUser] = useState<EnrichedUser | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Reset password form state
@@ -927,6 +930,14 @@ export default function UsersPage() {
                           </button>
 
                           <button
+                            onClick={() => setActiveEditUser(user)}
+                            className="p-1.5 rounded-lg bg-[#202020] hover:bg-[#282828] text-[#888888] hover:text-amber-400 transition-colors cursor-pointer"
+                            title="✏️ Edit User"
+                          >
+                            <UserCog className="h-3.5 w-3.5" />
+                          </button>
+
+                          <button
                             onClick={() => handleToggleStatus(user)}
                             disabled={togglingUserId === user.id}
                             className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
@@ -1341,6 +1352,22 @@ export default function UsersPage() {
               }
             : null
         }
+      />
+
+      <EditUserModal
+        isOpen={Boolean(activeEditUser)}
+        onClose={() => setActiveEditUser(null)}
+        user={activeEditUser}
+        onUserUpdated={(updatedUser) => {
+          setUsers((prev) =>
+            prev.map((u) => (u.id === updatedUser.id ? { ...u, ...updatedUser } : u))
+          );
+          if (activeUser && activeUser.id === updatedUser.id) {
+            setActiveUser((prev) => (prev ? { ...prev, ...updatedUser } : null));
+          }
+          showToast(`User ${updatedUser.email} updated successfully`);
+          fetchUsers(currentPage);
+        }}
       />
     </div>
   );

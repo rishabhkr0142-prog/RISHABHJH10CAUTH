@@ -45,6 +45,36 @@ export async function GET(
     );
   }
 
+  // Lookup assigned user if note exists
+  let assignedUser: { id: string; email: string; username: string | null } | null = null;
+  if (license.note) {
+    const cleanNote = license.note.toLowerCase().trim();
+    const { data: users } = await admin
+      .from('application_users')
+      .select('id, email, username')
+      .eq('application_id', license.application_id);
+
+    const found = (users || []).find((u) => {
+      const email = u.email.toLowerCase().trim();
+      const username = u.username?.toLowerCase().trim();
+      return (
+        email === cleanNote ||
+        u.id === cleanNote ||
+        (username && username === cleanNote) ||
+        cleanNote.includes(email) ||
+        cleanNote.includes(u.id)
+      );
+    });
+
+    if (found) {
+      assignedUser = {
+        id: found.id,
+        email: found.email,
+        username: found.username
+      };
+    }
+  }
+
   // Safe HWID display - do not expose full hardware profiles, just safe registered device IDs/HWIDs
   const safeHwids = (license.device_hwids || []).map((h) => {
     if (h.length > 8) {
@@ -69,6 +99,7 @@ export async function GET(
       created_at: license.created_at,
       updated_at: license.updated_at,
       revoked_at: license.revoked_at,
+      assigned_user: assignedUser,
       application: {
         id: appRecord.id,
         name: appRecord.name,
@@ -110,7 +141,7 @@ export async function PATCH(
   // Verify ownership of the application
   const { data: appRecord } = await admin
     .from('applications')
-    .select('id, owner_id')
+    .select('id, owner_id, name')
     .eq('id', license.application_id)
     .maybeSingle();
 
@@ -125,6 +156,141 @@ export async function PATCH(
     updated_at: new Date().toISOString()
   };
 
+  // 1. Assign User action
+  if (body.action === 'assign_user' || body.action === 'assign-user') {
+    const targetUserId = body.userId || body.user_id;
+    const targetEmail = body.email || body.userEmail;
+
+    if (!targetUserId && !targetEmail) {
+      return NextResponse.json(
+        { error: 'User ID or email is required to assign license' },
+        { status: 400 }
+      );
+    }
+
+    // Lookup user in the same application
+    let userQuery = admin
+      .from('application_users')
+      .select('id, email, username, application_id')
+      .eq('application_id', license.application_id);
+
+    if (targetUserId) {
+      userQuery = userQuery.eq('id', targetUserId);
+    } else {
+      userQuery = userQuery.eq('email', targetEmail.trim().toLowerCase());
+    }
+
+    const { data: targetUser, error: userErr } = await userQuery.maybeSingle();
+
+    if (userErr || !targetUser) {
+      return NextResponse.json(
+        { error: 'User not found in this application' },
+        { status: 404 }
+      );
+    }
+
+    // Validation: Check if the user already has an active license in this application
+    const { data: otherLicenses } = await admin
+      .from('licenses')
+      .select('id, note, status, expires_at')
+      .eq('application_id', license.application_id)
+      .neq('id', license.id)
+      .neq('status', 'revoked');
+
+    const cleanUserEmail = targetUser.email.toLowerCase().trim();
+    const cleanUsername = targetUser.username?.toLowerCase().trim();
+    const cleanUserId = targetUser.id;
+    const now = new Date();
+
+    const existingActiveLic = (otherLicenses || []).find((lic) => {
+      if (!lic.note) return false;
+      if (lic.expires_at && new Date(lic.expires_at) < now) return false;
+      const cleanNote = lic.note.toLowerCase().trim();
+      return (
+        cleanNote === cleanUserEmail ||
+        cleanNote === cleanUserId ||
+        (cleanUsername && cleanNote === cleanUsername) ||
+        cleanNote.includes(cleanUserEmail) ||
+        cleanNote.includes(cleanUserId)
+      );
+    });
+
+    if (existingActiveLic) {
+      return NextResponse.json(
+        { error: `User ${targetUser.email} already has an active license assigned in this application.` },
+        { status: 400 }
+      );
+    }
+
+    updateData.note = targetUser.email;
+
+    const { data: updated, error: updateErr } = await admin
+      .from('licenses')
+      .update(updateData)
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (updateErr) {
+      return NextResponse.json({ error: updateErr.message }, { status: 500 });
+    }
+
+    await logApplicationEvent({
+      applicationId: license.application_id,
+      event: 'license.assigned',
+      metadata: {
+        licenseId: id,
+        userId: targetUser.id,
+        userEmail: targetUser.email,
+        assignedBy: auth.profile.email
+      }
+    });
+
+    return NextResponse.json({
+      success: true,
+      message: `License assigned to ${targetUser.email} successfully`,
+      license: updated,
+      assigned_user: {
+        id: targetUser.id,
+        email: targetUser.email,
+        username: targetUser.username
+      }
+    });
+  }
+
+  // 2. Unassign User action
+  if (body.action === 'unassign_user' || body.action === 'unassign-user') {
+    updateData.note = null;
+
+    const { data: updated, error: updateErr } = await admin
+      .from('licenses')
+      .update(updateData)
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (updateErr) {
+      return NextResponse.json({ error: updateErr.message }, { status: 500 });
+    }
+
+    await logApplicationEvent({
+      applicationId: license.application_id,
+      event: 'license.unassigned',
+      metadata: {
+        licenseId: id,
+        unassignedBy: auth.profile.email
+      }
+    });
+
+    return NextResponse.json({
+      success: true,
+      message: 'License unassigned from user successfully',
+      license: updated,
+      assigned_user: null
+    });
+  }
+
+  // 3. Reset HWID action
   if (body.action === 'reset_hwid' || body.action === 'reset-hwid') {
     if (license.status === 'revoked') {
       return NextResponse.json(
@@ -143,6 +309,29 @@ export async function PATCH(
   } else if (body.action === 'revoke' || body.status === 'revoked') {
     updateData.status = 'revoked';
     updateData.revoked_at = new Date().toISOString();
+  }
+
+  // 4. Edit License action / Field updates
+  if (body.subscription && typeof body.subscription === 'string' && body.subscription.trim()) {
+    updateData.subscription = body.subscription.trim();
+  }
+
+  if (body.allowed_devices !== undefined || body.allowedDevices !== undefined) {
+    const devices = parseInt(body.allowed_devices ?? body.allowedDevices, 10);
+    if (!isNaN(devices) && devices >= 1 && devices <= 1000) {
+      updateData.allowed_devices = devices;
+    }
+  }
+
+  if (body.expires_at !== undefined) {
+    updateData.expires_at = body.expires_at ? new Date(body.expires_at).toISOString() : null;
+  }
+
+  if (body.status && ['active', 'used', 'expired', 'revoked'].includes(body.status)) {
+    updateData.status = body.status;
+    if (body.status === 'revoked' && !license.revoked_at) {
+      updateData.revoked_at = new Date().toISOString();
+    }
   }
 
   if (typeof body.note === 'string') {
@@ -179,6 +368,12 @@ export async function PATCH(
       event: 'license.revoked',
       metadata: { licenseId: id }
     });
+  } else {
+    await logApplicationEvent({
+      applicationId: license.application_id,
+      event: 'license.updated',
+      metadata: { licenseId: id, updatedFields: Object.keys(updateData) }
+    });
   }
 
   return NextResponse.json({
@@ -188,7 +383,7 @@ export async function PATCH(
         ? 'HWID binding reset successfully'
         : updateData.status === 'revoked'
         ? 'License has been revoked'
-        : 'License updated',
+        : 'License updated successfully',
     license: updated
   });
 }

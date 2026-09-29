@@ -40,6 +40,11 @@ export interface LicenseDetailData {
   days_remaining_text?: string;
   is_expired?: boolean;
   is_expiring_soon?: boolean;
+  assigned_user?: {
+    id: string;
+    email: string;
+    username: string | null;
+  } | null;
   application?: {
     id: string;
     name: string;
