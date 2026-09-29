@@ -93,14 +93,36 @@ export async function PATCH(
     }
 
     const body = await request.json();
-    const { status, password, username, email } = body;
+    let { status, password, username, email, application_id, target_application_id } = body;
 
     const updatePayload: Database['public']['Tables']['application_users']['Update'] = {
       updated_at: new Date().toISOString()
     };
 
-    if (status && ['active', 'disabled', 'suspended'].includes(status)) {
-      updatePayload.status = status as 'active' | 'disabled' | 'suspended';
+    const targetApp = application_id || target_application_id;
+    if (targetApp && targetApp !== existingUser.application_id) {
+      const { data: targetAppCheck } = await supabase
+        .from('applications')
+        .select('id')
+        .eq('id', targetApp)
+        .eq('owner_id', auth.profile.id)
+        .maybeSingle();
+
+      if (!targetAppCheck) {
+        return NextResponse.json(
+          { error: 'Target application not found or unauthorized' },
+          { status: 403 }
+        );
+      }
+      updatePayload.application_id = targetApp;
+    }
+
+    let normalizedStatus = status;
+    if (normalizedStatus === 'banned') normalizedStatus = 'suspended';
+    if (normalizedStatus === 'paused') normalizedStatus = 'disabled';
+
+    if (normalizedStatus && ['active', 'disabled', 'suspended'].includes(normalizedStatus)) {
+      updatePayload.status = normalizedStatus as 'active' | 'disabled' | 'suspended';
     }
 
     if (username !== undefined) {

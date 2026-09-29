@@ -73,7 +73,10 @@ export async function GET(request: Request) {
     .order('created_at', { ascending: false });
 
   if (status && status !== 'all') {
-    query = query.eq('status', status as 'active' | 'disabled' | 'suspended');
+    let dbStatus = status;
+    if (dbStatus === 'banned') dbStatus = 'suspended';
+    if (dbStatus === 'paused') dbStatus = 'disabled';
+    query = query.eq('status', dbStatus as 'active' | 'disabled' | 'suspended');
   }
 
   const { data: rawUsers, error: userErr } = await query;
@@ -178,6 +181,9 @@ export async function GET(request: Request) {
   // 8. Apply post-enrichment filters (License Status, Subscription, Expiry)
   if (licenseStatus && licenseStatus !== 'all') {
     enrichedUsers = enrichedUsers.filter((u) => {
+      if (licenseStatus === 'has_license') {
+        return !!u.license;
+      }
       if (licenseStatus === 'no_license') {
         return !u.license;
       }

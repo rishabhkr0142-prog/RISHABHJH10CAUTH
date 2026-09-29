@@ -105,6 +105,38 @@ export function formatDateReliable(isoDate: string | null | undefined, includeTi
 }
 
 /**
+ * Formats date and time for table display matching reference screenshot:
+ * Date: "Aug 30, 2026"
+ * Time: "07:11 AM"
+ */
+export function formatTableDateTime(isoDate: string | null | undefined): { date: string; time: string } | null {
+  if (!isoDate) return null;
+  try {
+    const d = new Date(isoDate);
+    if (isNaN(d.getTime())) return null;
+
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const day = d.getDate();
+    const month = months[d.getMonth()];
+    const year = d.getFullYear();
+    const date = `${month} ${day}, ${year}`;
+
+    let hours = d.getHours();
+    const ampm = hours >= 12 ? 'PM' : 'AM';
+    hours = hours % 12;
+    hours = hours ? hours : 12;
+    const hoursStr = String(hours).padStart(2, '0');
+    const minutesStr = String(d.getMinutes()).padStart(2, '0');
+    const time = `${hoursStr}:${minutesStr} ${ampm}`;
+
+    return { date, time };
+  } catch {
+    return null;
+  }
+}
+
+
+/**
  * Calculates expiry information and remaining days reliably on the server.
  */
 export function calculateExpiryData(expiresAt: string | null | undefined): {

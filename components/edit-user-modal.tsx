@@ -1,13 +1,20 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { UserCog, AlertCircle, Eye, EyeOff, X } from 'lucide-react';
+import { User, Eye, EyeOff, X, AlertCircle } from 'lucide-react';
 import type { EnrichedUser } from '@/lib/user-service';
+
+export interface ApplicationOption {
+  id: string;
+  name: string;
+  client_id?: string;
+}
 
 interface EditUserModalProps {
   isOpen: boolean;
   onClose: () => void;
   user: EnrichedUser | null;
+  applications?: ApplicationOption[];
   onUserUpdated?: (user: any) => void;
 }
 
@@ -15,12 +22,14 @@ export default function EditUserModal({
   isOpen,
   onClose,
   user,
+  applications = [],
   onUserUpdated
 }: EditUserModalProps) {
+  const [targetAppId, setTargetAppId] = useState('');
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [status, setStatus] = useState<'active' | 'disabled' | 'suspended'>('active');
+  const [status, setStatus] = useState<string>('active');
 
   const [showPassword, setShowPassword] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -28,9 +37,16 @@ export default function EditUserModal({
 
   useEffect(() => {
     if (user) {
+      setTargetAppId(user.application_id || (user.application?.id ?? ''));
       setUsername(user.username || '');
       setEmail(user.email || '');
-      setStatus(user.status || 'active');
+      if (user.status === 'suspended') {
+        setStatus('banned');
+      } else if (user.status === 'disabled') {
+        setStatus('disabled');
+      } else {
+        setStatus('active');
+      }
       setPassword('');
       setErrorMessage(null);
     }
@@ -52,6 +68,8 @@ export default function EditUserModal({
 
     try {
       const payload: any = {
+        application_id: targetAppId || user.application_id,
+        target_application_id: targetAppId || user.application_id,
         username: username.trim() || null,
         email: email.trim().toLowerCase(),
         status
@@ -74,9 +92,10 @@ export default function EditUserModal({
       if (onUserUpdated) {
         onUserUpdated({
           ...user,
+          application_id: payload.application_id,
           username: payload.username,
           email: payload.email,
-          status: payload.status
+          status: status === 'banned' ? 'suspended' : status === 'paused' ? 'disabled' : status
         });
       }
 
@@ -90,21 +109,21 @@ export default function EditUserModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-xs overflow-y-auto">
-      <div className="relative w-full max-w-md my-8 bg-[#161616] border border-[#2a2a2a] rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+      <div className="relative w-full max-w-md my-8 bg-[#141414] border border-[#262626] rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-5 border-b border-[#242424] bg-[#121212]/80">
-          <div className="flex items-center gap-3">
-            <div className="h-9 w-9 rounded-xl bg-[#1c1c1c] border border-[#2a2a2a] flex items-center justify-center text-[#ff5f15]">
-              <UserCog className="h-5 w-5" />
+        <div className="flex items-start justify-between p-6 pb-4 border-b border-[#222222]">
+          <div className="flex items-center gap-3.5">
+            <div className="h-10 w-10 rounded-full bg-[#201815] border border-[#ff5f15]/30 flex items-center justify-center text-[#ff5f15]">
+              <User className="h-5 w-5" />
             </div>
             <div>
-              <h2 className="text-base font-semibold text-white tracking-tight">Edit User</h2>
-              <p className="text-xs text-[#888888]">{user.email}</p>
+              <h2 className="text-lg font-bold text-white tracking-tight">Edit User</h2>
+              <p className="text-xs text-[#888888]">Update user details for this application</p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-lg text-[#777777] hover:text-white hover:bg-[#202020] transition-colors cursor-pointer"
+            className="p-1 rounded-lg text-[#777777] hover:text-white hover:bg-[#202020] transition-colors cursor-pointer"
           >
             <X className="h-5 w-5" />
           </button>
@@ -119,48 +138,47 @@ export default function EditUserModal({
             </div>
           )}
 
-          {/* Application (Read-only) */}
+          {/* Target Application */}
           <div>
-            <label className="block text-xs font-semibold text-[#888888] uppercase tracking-wider mb-1.5">
-              Application
+            <label className="block text-[11px] font-bold text-[#888888] uppercase tracking-wider mb-1.5">
+              Target Application *
             </label>
-            <div className="w-full px-3.5 py-2.5 rounded-xl bg-[#111111] border border-[#282828] text-xs text-[#888888]">
-              {user.application?.name || 'Application'}
-            </div>
+            <select
+              value={targetAppId}
+              onChange={(e) => setTargetAppId(e.target.value)}
+              className="w-full px-3.5 py-2.5 rounded-xl bg-[#0e0e0e] border border-[#2a2a2a] text-xs text-white focus:outline-none focus:border-[#ff5f15] transition-colors cursor-pointer"
+            >
+              {applications.length > 0 ? (
+                applications.map((app) => (
+                  <option key={app.id} value={app.id}>
+                    {app.name}
+                  </option>
+                ))
+              ) : (
+                <option value={user.application_id}>{user.application?.name || 'Current Application'}</option>
+              )}
+            </select>
           </div>
 
           {/* Username */}
           <div>
-            <label className="block text-xs font-semibold text-[#888888] uppercase tracking-wider mb-1.5">
-              Username
+            <label className="block text-[11px] font-bold text-[#888888] uppercase tracking-wider mb-1.5">
+              Username *
             </label>
             <input
               type="text"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               placeholder="e.g. john_doe"
-              className="w-full px-3.5 py-2.5 rounded-xl bg-[#111111] border border-[#282828] text-xs text-white placeholder-[#555555] focus:outline-none focus:border-[#ff5f15]/50 transition-colors"
-            />
-          </div>
-
-          {/* Email */}
-          <div>
-            <label className="block text-xs font-semibold text-[#888888] uppercase tracking-wider mb-1.5">
-              Email *
-            </label>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
               required
-              className="w-full px-3.5 py-2.5 rounded-xl bg-[#111111] border border-[#282828] text-xs text-white placeholder-[#555555] focus:outline-none focus:border-[#ff5f15]/50 transition-colors"
+              className="w-full px-3.5 py-2.5 rounded-xl bg-[#0e0e0e] border border-[#2a2a2a] text-xs text-white placeholder-[#555555] focus:outline-none focus:border-[#ff5f15] transition-colors"
             />
           </div>
 
-          {/* New Password (Optional) */}
+          {/* Password */}
           <div>
-            <label className="block text-xs font-semibold text-[#888888] uppercase tracking-wider mb-1.5">
-              New Password (Leave blank to keep current)
+            <label className="block text-[11px] font-bold text-[#888888] uppercase tracking-wider mb-1.5">
+              Password *
             </label>
             <div className="relative">
               <input
@@ -168,7 +186,7 @@ export default function EditUserModal({
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="Leave blank to keep unchanged"
-                className="w-full px-3.5 py-2.5 pr-10 rounded-xl bg-[#111111] border border-[#282828] text-xs text-white placeholder-[#555555] focus:outline-none focus:border-[#ff5f15]/50 transition-colors"
+                className="w-full px-3.5 py-2.5 pr-10 rounded-xl bg-[#0e0e0e] border border-[#2a2a2a] text-xs text-white placeholder-[#555555] focus:outline-none focus:border-[#ff5f15] transition-colors"
               />
               <button
                 type="button"
@@ -180,35 +198,51 @@ export default function EditUserModal({
             </div>
           </div>
 
+          {/* Email */}
+          <div>
+            <label className="block text-[11px] font-bold text-[#888888] uppercase tracking-wider mb-1.5">
+              Email (Optional)
+            </label>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="e.g. user@example.com"
+              className="w-full px-3.5 py-2.5 rounded-xl bg-[#0e0e0e] border border-[#2a2a2a] text-xs text-white placeholder-[#555555] focus:outline-none focus:border-[#ff5f15] transition-colors"
+            />
+            <p className="mt-1 text-[11px] text-[#666666]">If left blank, an internal user handle email is assigned.</p>
+          </div>
+
           {/* Status */}
           <div>
-            <label className="block text-xs font-semibold text-[#888888] uppercase tracking-wider mb-1.5">
-              Account Status *
+            <label className="block text-[11px] font-bold text-[#888888] uppercase tracking-wider mb-1.5">
+              Status *
             </label>
             <select
               value={status}
-              onChange={(e) => setStatus(e.target.value as any)}
-              className="w-full px-3.5 py-2.5 rounded-xl bg-[#111111] border border-[#282828] text-xs text-white focus:outline-none focus:border-[#ff5f15]/50 transition-colors cursor-pointer"
+              onChange={(e) => setStatus(e.target.value)}
+              className="w-full px-3.5 py-2.5 rounded-xl bg-[#0e0e0e] border border-[#2a2a2a] text-xs text-white focus:outline-none focus:border-[#ff5f15] transition-colors cursor-pointer"
             >
               <option value="active">Active</option>
               <option value="disabled">Disabled</option>
-              <option value="suspended">Suspended</option>
+              <option value="banned">Banned</option>
+              <option value="paused">Paused</option>
             </select>
           </div>
 
           {/* Footer Actions */}
-          <div className="pt-3 border-t border-[#242424] flex items-center justify-end gap-3">
+          <div className="pt-4 border-t border-[#222222] flex items-center justify-end gap-3">
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 rounded-xl bg-[#1c1c1c] hover:bg-[#242424] border border-[#2c2c2c] text-xs font-medium text-white transition-colors cursor-pointer"
+              className="px-5 py-2 rounded-xl bg-[#1c1c1c] hover:bg-[#252525] border border-[#2a2a2a] text-xs font-medium text-white transition-colors cursor-pointer"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={isSubmitting}
-              className="px-5 py-2 rounded-xl bg-[#ff5f15] hover:bg-[#e0500e] disabled:opacity-50 text-xs font-semibold text-white shadow-md transition-colors cursor-pointer"
+              className="px-6 py-2 rounded-xl bg-[#ff5f15] hover:bg-[#e0500e] disabled:opacity-50 text-xs font-semibold text-white shadow-md transition-colors cursor-pointer"
             >
               {isSubmitting ? 'Saving...' : 'Save Changes'}
             </button>
