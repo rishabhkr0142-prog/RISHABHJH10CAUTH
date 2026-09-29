@@ -1,12 +1,21 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Users, AlertCircle, Eye, EyeOff, X } from 'lucide-react';
+import { Users, AlertCircle, Eye, EyeOff, Check, Copy, KeyRound, X, CheckCircle2 } from 'lucide-react';
+import { copyToClipboardSafe } from '@/lib/clipboard';
+import { AVAILABLE_SUBSCRIPTIONS } from '@/lib/subscriptions';
 
 export interface ApplicationOption {
   id: string;
   name: string;
   client_id?: string;
+}
+
+export interface LicenseConfigDefaults {
+  subscription: string;
+  expiry: string;
+  hwidLocked: boolean;
+  allowedDevices: string;
 }
 
 interface CreateUserModalProps {
@@ -15,6 +24,7 @@ interface CreateUserModalProps {
   onUserCreated?: (user: any) => void;
   selectedApplicationId?: string;
   applications?: ApplicationOption[];
+  onOpenCreateLicense?: (user: any, initialLicenseData?: LicenseConfigDefaults) => void;
 }
 
 export default function CreateUserModal({
@@ -22,21 +32,50 @@ export default function CreateUserModal({
   onClose,
   onUserCreated,
   selectedApplicationId,
-  applications: initialApplications
+  applications: initialApplications,
+  onOpenCreateLicense
 }: CreateUserModalProps) {
   const [apps, setApps] = useState<ApplicationOption[]>(initialApplications || []);
   const [targetAppId, setTargetAppId] = useState<string>(selectedApplicationId || '');
 
-  // Pure User Fields
+  // Pure User Account Fields
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [email, setEmail] = useState('');
-  const [status, setStatus] = useState<'active' | 'disabled' | 'suspended'>('active');
+  const [showPassword, setShowPassword] = useState(false);
+
+  // License Configuration Fields (UI-preserved: kept in form state, NOT created automatically)
+  const [subscription, setSubscription] = useState('default');
+  const [expiry, setExpiry] = useState('');
+  const [hwidLocked, setHwidLocked] = useState(false);
+  const [generateToken, setGenerateToken] = useState(false);
+  const [allowedDevices, setAllowedDevices] = useState('1');
 
   // UI States
-  const [showPassword, setShowPassword] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [createdUser, setCreatedUser] = useState<any | null>(null);
+  const [generatedToken, setGeneratedToken] = useState<string | null>(null);
+  const [copiedToken, setCopiedToken] = useState(false);
+
+  // Helper to compute ISO string for datetime-local input
+  function getFutureDateTime(hoursToAdd: number): string {
+    const d = new Date();
+    d.setHours(d.getHours() + hoursToAdd);
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    const hours = String(d.getHours()).padStart(2, '0');
+    const minutes = String(d.getMinutes()).padStart(2, '0');
+    return `${year}-${month}-${day}T${hours}:${minutes}`;
+  }
+
+  // Set default expiry to 30 days initially
+  useEffect(() => {
+    if (isOpen && !expiry) {
+      setExpiry(getFutureDateTime(24 * 30));
+    }
+  }, [isOpen]);
 
   // Load applications if not provided or empty
   useEffect(() => {
@@ -66,6 +105,27 @@ export default function CreateUserModal({
     }
   }, [selectedApplicationId]);
 
+  // Expiry quick duration pills
+  function handleQuickExpiry(type: '1H' | '1D' | '7D' | '1MO' | '1Y') {
+    switch (type) {
+      case '1H':
+        setExpiry(getFutureDateTime(1));
+        break;
+      case '1D':
+        setExpiry(getFutureDateTime(24));
+        break;
+      case '7D':
+        setExpiry(getFutureDateTime(24 * 7));
+        break;
+      case '1MO':
+        setExpiry(getFutureDateTime(24 * 30));
+        break;
+      case '1Y':
+        setExpiry(getFutureDateTime(24 * 365));
+        break;
+    }
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setErrorMessage(null);
@@ -80,18 +140,22 @@ export default function CreateUserModal({
       return;
     }
 
-    if (!password || password.length < 1 || password.length > 100) {
+    // Default password fallback if blank
+    const effectivePassword = password || `${username.trim()}123!`;
+    if (effectivePassword.length < 1 || effectivePassword.length > 100) {
       setErrorMessage('Password must be between 1 and 100 characters');
       return;
     }
 
-    // Auto-generate fallback email if left blank so database constraint is satisfied
+    // Auto-generate fallback email if left blank so database unique constraint is satisfied
     const safeEmail =
       email.trim() || `${username.trim().toLowerCase().replace(/[^a-z0-9]/g, '')}@app.local`;
 
     setIsSubmitting(true);
 
     try {
+      // NOTE: Creating a User creates ONLY the user account record.
+      // It does NOT create a license record.
       const res = await fetch('/api/users', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -100,8 +164,9 @@ export default function CreateUserModal({
           applicationId: targetAppId,
           username: username.trim(),
           email: safeEmail,
-          password: password,
-          status
+          password: effectivePassword,
+          status: 'active',
+          generate_token: generateToken
         })
       });
 
@@ -110,8 +175,10 @@ export default function CreateUserModal({
         throw new Error(data.error || 'Failed to create user');
       }
 
-      resetForm();
-      onClose();
+      setCreatedUser(data.user);
+      if (generateToken && data.token) {
+        setGeneratedToken(data.token);
+      }
 
       if (onUserCreated) {
         onUserCreated(data.user);
@@ -127,8 +194,15 @@ export default function CreateUserModal({
     setUsername('');
     setPassword('');
     setEmail('');
-    setStatus('active');
+    setSubscription('default');
+    setExpiry(getFutureDateTime(24 * 30));
+    setHwidLocked(false);
+    setGenerateToken(false);
+    setAllowedDevices('1');
     setErrorMessage(null);
+    setCreatedUser(null);
+    setGeneratedToken(null);
+    setCopiedToken(false);
   }
 
   function handleClose() {
@@ -136,148 +210,296 @@ export default function CreateUserModal({
     onClose();
   }
 
+  async function handleCopyToken() {
+    if (!generatedToken) return;
+    const ok = await copyToClipboardSafe(generatedToken);
+    if (ok) {
+      setCopiedToken(true);
+      setTimeout(() => setCopiedToken(false), 2000);
+    }
+  }
+
   if (!isOpen) return null;
 
+  const currentApp = apps.find((a) => a.id === targetAppId);
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-xs overflow-y-auto">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-xs animate-in fade-in duration-150 overflow-y-auto">
       <div className="relative w-full max-w-md my-8 bg-[#161616] border border-[#2a2a2a] rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-5 border-b border-[#242424] bg-[#121212]/80">
-          <div className="flex items-center gap-3">
-            <div className="h-9 w-9 rounded-xl bg-[#1c1c1c] border border-[#2a2a2a] flex items-center justify-center text-[#ff5f15]">
-              <Users className="h-5 w-5" />
+        <div className="flex items-center justify-between px-6 py-5 border-b border-[#222222] bg-[#121212]/80">
+          <div className="flex items-center gap-2.5">
+            <div className="h-8 w-8 rounded-xl bg-[#1f1f1f] border border-[#2d2d2d] flex items-center justify-center text-[#ff5f15]">
+              <Users className="h-4 w-4" />
             </div>
             <div>
-              <h2 className="text-base font-semibold text-white tracking-tight">Create User</h2>
-              <p className="text-xs text-[#888888]">Add a new user to your application</p>
+              <h3 className="font-bold text-white text-base">New User</h3>
+              {currentApp && (
+                <p className="text-[11px] text-[#727275]">
+                  Application: <span className="text-[#ff5f15] font-medium">{currentApp.name}</span>
+                </p>
+              )}
             </div>
           </div>
           <button
             onClick={handleClose}
-            className="p-1.5 rounded-lg text-[#777777] hover:text-white hover:bg-[#202020] transition-colors cursor-pointer"
+            className="text-[#727275] hover:text-white transition-colors cursor-pointer text-sm"
           >
-            <X className="h-5 w-5" />
+            ✕
           </button>
         </div>
 
-        {/* Form Body */}
-        <form onSubmit={handleSubmit} className="p-6 space-y-4 overflow-y-auto">
-          {errorMessage && (
-            <div className="p-3.5 rounded-xl bg-red-950/40 border border-red-900/50 flex items-center gap-2.5 text-red-300 text-xs">
-              <AlertCircle className="h-4 w-4 text-red-400 shrink-0" />
-              <span>{errorMessage}</span>
+        {errorMessage && (
+          <div className="mx-6 mt-4 p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-xs flex items-center gap-2">
+            <AlertCircle className="h-4 w-4 shrink-0" />
+            <span>{errorMessage}</span>
+          </div>
+        )}
+
+        {/* SUCCESS VIEW: User created without creating a license */}
+        {createdUser ? (
+          <div className="p-6 space-y-4">
+            <div className="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs flex items-center gap-2.5">
+              <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-400" />
+              <div>
+                <p className="font-semibold text-emerald-300">User created successfully.</p>
+                <p className="text-[11px] text-emerald-400/80">
+                  User account <span className="font-mono text-white">{createdUser.username || createdUser.email}</span> created. No license was automatically generated.
+                </p>
+              </div>
             </div>
-          )}
 
-          {/* Target Application * */}
-          <div>
-            <label className="block text-xs font-semibold text-[#888888] uppercase tracking-wider mb-1.5">
-              Target Application *
-            </label>
-            <select
-              value={targetAppId}
-              onChange={(e) => setTargetAppId(e.target.value)}
-              required
-              className="w-full px-3.5 py-2.5 rounded-xl bg-[#111111] border border-[#282828] text-xs text-white focus:outline-none focus:border-[#ff5f15]/50 transition-colors cursor-pointer"
-            >
-              {apps.map((app) => (
-                <option key={app.id} value={app.id}>
-                  {app.name}
-                </option>
-              ))}
-            </select>
-          </div>
+            {generatedToken && (
+              <div className="space-y-1.5">
+                <label className="block text-xs font-semibold text-[#888888] uppercase tracking-wider">
+                  Generated Token for this User
+                </label>
+                <div className="p-3 bg-[#111111] rounded-xl border border-[#282828] font-mono text-xs text-white break-all flex items-center justify-between gap-2">
+                  <span>{generatedToken}</span>
+                  <button
+                    type="button"
+                    onClick={handleCopyToken}
+                    className="p-1.5 rounded bg-[#1f1f1f] hover:bg-[#282828] text-white shrink-0 cursor-pointer"
+                    title="Copy token"
+                  >
+                    {copiedToken ? <Check className="h-4 w-4 text-emerald-400" /> : <Copy className="h-4 w-4" />}
+                  </button>
+                </div>
+              </div>
+            )}
 
-          {/* Username * */}
-          <div>
-            <label className="block text-xs font-semibold text-[#888888] uppercase tracking-wider mb-1.5">
-              Username *
-            </label>
-            <input
-              type="text"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              required
-              placeholder="e.g. john_doe"
-              className="w-full px-3.5 py-2.5 rounded-xl bg-[#111111] border border-[#282828] text-xs text-white placeholder-[#555555] focus:outline-none focus:border-[#ff5f15]/50 transition-colors"
-            />
-          </div>
-
-          {/* Password * */}
-          <div>
-            <label className="block text-xs font-semibold text-[#888888] uppercase tracking-wider mb-1.5">
-              Password *
-            </label>
-            <div className="relative">
-              <input
-                type={showPassword ? 'text' : 'password'}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                placeholder="Enter account password"
-                className="w-full px-3.5 py-2.5 pr-10 rounded-xl bg-[#111111] border border-[#282828] text-xs text-white placeholder-[#555555] focus:outline-none focus:border-[#ff5f15]/50 transition-colors"
-              />
+            <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-[#222222]">
               <button
                 type="button"
-                onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-[#666666] hover:text-white transition-colors"
+                onClick={handleClose}
+                className="px-4 py-2 rounded-xl bg-[#1f1f1f] hover:bg-[#282828] text-xs font-semibold text-white transition-colors cursor-pointer"
               >
-                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                Done
               </button>
+              {onOpenCreateLicense && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const u = createdUser;
+                    const licData: LicenseConfigDefaults = {
+                      subscription,
+                      expiry,
+                      hwidLocked,
+                      allowedDevices
+                    };
+                    handleClose();
+                    onOpenCreateLicense(u, licData);
+                  }}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#ff5f15] hover:bg-[#e04f0f] text-xs font-semibold text-white transition-all shadow-[0_0_15px_rgba(255,95,21,0.2)] cursor-pointer"
+                >
+                  <KeyRound className="h-3.5 w-3.5" />
+                  <span>Create License</span>
+                </button>
+              )}
             </div>
           </div>
+        ) : (
+          /* FORM VIEW: EXACT FIELDS PRESERVED */
+          <form onSubmit={handleSubmit} className="p-6 space-y-3.5 overflow-y-auto">
+            {/* Target Application Selector */}
+            {apps.length > 0 && (
+              <div>
+                <label className="block text-xs font-semibold text-[#888888] uppercase tracking-wider mb-1">
+                  Target Application *
+                </label>
+                <select
+                  value={targetAppId}
+                  onChange={(e) => setTargetAppId(e.target.value)}
+                  required
+                  className="w-full px-3 py-2 rounded-xl bg-[#111111] border border-[#282828] text-xs text-white focus:outline-none focus:border-[#ff5f15]/50 transition-colors cursor-pointer"
+                >
+                  {apps.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
 
-          {/* Email */}
-          <div>
-            <label className="block text-xs font-semibold text-[#888888] uppercase tracking-wider mb-1.5">
-              Email (Optional)
-            </label>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="e.g. user@example.com"
-              className="w-full px-3.5 py-2.5 rounded-xl bg-[#111111] border border-[#282828] text-xs text-white placeholder-[#555555] focus:outline-none focus:border-[#ff5f15]/50 transition-colors"
-            />
-            <p className="mt-1 text-[11px] text-[#666666]">
-              If left blank, an internal user handle email is assigned.
-            </p>
-          </div>
+            {/* USERNAME * */}
+            <div>
+              <label className="block text-xs font-semibold text-[#888888] uppercase tracking-wider mb-1">
+                USERNAME *
+              </label>
+              <input
+                type="text"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                placeholder="Username"
+                required
+                className="w-full px-3 py-2 rounded-xl bg-[#111111] border border-[#282828] text-xs text-white placeholder-[#555555] focus:outline-none focus:border-[#ff5f15]/50 transition-colors"
+              />
+            </div>
 
-          {/* Status */}
-          <div>
-            <label className="block text-xs font-semibold text-[#888888] uppercase tracking-wider mb-1.5">
-              Status *
-            </label>
-            <select
-              value={status}
-              onChange={(e) => setStatus(e.target.value as any)}
-              className="w-full px-3.5 py-2.5 rounded-xl bg-[#111111] border border-[#282828] text-xs text-white focus:outline-none focus:border-[#ff5f15]/50 transition-colors cursor-pointer"
-            >
-              <option value="active">Active</option>
-              <option value="disabled">Disabled</option>
-              <option value="suspended">Suspended</option>
-            </select>
-          </div>
+            {/* PASSWORD */}
+            <div>
+              <label className="block text-xs font-semibold text-[#888888] uppercase tracking-wider mb-1">
+                PASSWORD
+              </label>
+              <div className="relative">
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Password"
+                  maxLength={100}
+                  className="w-full px-3 py-2 pr-9 rounded-xl bg-[#111111] border border-[#282828] text-xs text-white placeholder-[#555555] focus:outline-none focus:border-[#ff5f15]/50 transition-colors"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#727275] hover:text-white transition-colors cursor-pointer"
+                >
+                  {showPassword ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                </button>
+              </div>
+            </div>
 
-          {/* Footer Actions */}
-          <div className="pt-3 border-t border-[#242424] flex items-center justify-end gap-3">
-            <button
-              type="button"
-              onClick={handleClose}
-              className="px-4 py-2 rounded-xl bg-[#1c1c1c] hover:bg-[#242424] border border-[#2c2c2c] text-xs font-medium text-white transition-colors cursor-pointer"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="px-5 py-2 rounded-xl bg-[#ff5f15] hover:bg-[#e0500e] disabled:opacity-50 text-xs font-semibold text-white shadow-md transition-colors cursor-pointer"
-            >
-              {isSubmitting ? 'Creating...' : 'Create User'}
-            </button>
-          </div>
-        </form>
+            {/* EMAIL */}
+            <div>
+              <label className="block text-xs font-semibold text-[#888888] uppercase tracking-wider mb-1">
+                EMAIL
+              </label>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="Email"
+                className="w-full px-3 py-2 rounded-xl bg-[#111111] border border-[#282828] text-xs text-white placeholder-[#555555] focus:outline-none focus:border-[#ff5f15]/50 transition-colors"
+              />
+            </div>
+
+            {/* SUBSCRIPTION * */}
+            <div>
+              <label className="block text-xs font-semibold text-[#888888] uppercase tracking-wider mb-1">
+                SUBSCRIPTION *
+              </label>
+              <select
+                value={subscription}
+                onChange={(e) => setSubscription(e.target.value)}
+                required
+                className="w-full px-3 py-2 rounded-xl bg-[#111111] border border-[#282828] text-xs text-white focus:outline-none focus:border-[#ff5f15]/50 transition-colors cursor-pointer"
+              >
+                {AVAILABLE_SUBSCRIPTIONS.map((tier) => (
+                  <option key={tier.id} value={tier.id}>
+                    {tier.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* EXPIRY * with quick pills */}
+            <div>
+              <label className="block text-xs font-semibold text-[#888888] uppercase tracking-wider mb-1">
+                EXPIRY *
+              </label>
+              <input
+                type="datetime-local"
+                value={expiry}
+                onChange={(e) => setExpiry(e.target.value)}
+                required
+                className="w-full px-3 py-2 rounded-xl bg-[#111111] border border-[#282828] text-xs text-white focus:outline-none focus:border-[#ff5f15]/50 transition-colors"
+              />
+              <div className="flex items-center gap-1.5 mt-1.5">
+                {(['1D', '1H', '7D', '1MO', '1Y'] as const).map((pill) => (
+                  <button
+                    key={pill}
+                    type="button"
+                    onClick={() => handleQuickExpiry(pill)}
+                    className="flex-1 py-1 rounded-lg bg-[#1f1f1f] hover:bg-[#282828] border border-[#282828] text-[10px] font-mono text-[#aaaaaa] hover:text-white transition-colors cursor-pointer"
+                  >
+                    {pill}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Checkboxes */}
+            <div className="space-y-2 pt-1 border-t border-[#222222]">
+              <label className="flex items-center justify-between cursor-pointer py-0.5">
+                <span className="text-xs text-[#cccccc]">HWID Affected (Lock to Device)</span>
+                <input
+                  type="checkbox"
+                  checked={hwidLocked}
+                  onChange={(e) => setHwidLocked(e.target.checked)}
+                  className="h-4 w-4 rounded bg-[#111111] border-[#333333] text-[#ff5f15] focus:ring-0 focus:ring-offset-0 cursor-pointer accent-[#ff5f15]"
+                />
+              </label>
+              <label className="flex items-center justify-between cursor-pointer py-0.5">
+                <span className="text-xs text-[#cccccc]">Generate Token for this User</span>
+                <input
+                  type="checkbox"
+                  checked={generateToken}
+                  onChange={(e) => setGenerateToken(e.target.checked)}
+                  className="h-4 w-4 rounded bg-[#111111] border-[#333333] text-[#ff5f15] focus:ring-0 focus:ring-offset-0 cursor-pointer accent-[#ff5f15]"
+                />
+              </label>
+            </div>
+
+            {/* Allowed Devices (Multi-HWID) */}
+            <div>
+              <label className="block text-xs font-semibold text-[#888888] uppercase tracking-wider mb-1">
+                Allowed Devices (Multi-HWID)
+              </label>
+              <select
+                value={allowedDevices}
+                onChange={(e) => setAllowedDevices(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl bg-[#111111] border border-[#282828] text-xs text-white focus:outline-none focus:border-[#ff5f15]/50 transition-colors cursor-pointer"
+              >
+                <option value="1">1 Device (Default)</option>
+                <option value="2">2 Devices</option>
+                <option value="3">3 Devices</option>
+                <option value="5">5 Devices</option>
+                <option value="10">10 Devices</option>
+                <option value="unlimited">Unlimited Devices</option>
+              </select>
+            </div>
+
+            {/* Actions */}
+            <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#222222]">
+              <button
+                type="button"
+                onClick={handleClose}
+                className="px-4 py-2 rounded-xl bg-[#1f1f1f] hover:bg-[#282828] text-xs font-semibold text-[#888888] hover:text-white transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="px-4 py-2 rounded-xl bg-[#ff5f15] hover:bg-[#e04f0f] text-xs font-semibold text-white transition-all shadow-[0_0_15px_rgba(255,95,21,0.2)] cursor-pointer disabled:opacity-50"
+              >
+                {isSubmitting ? 'Creating...' : 'Create User'}
+              </button>
+            </div>
+          </form>
+        )}
       </div>
     </div>
   );

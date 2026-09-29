@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { copyToClipboardSafe } from '@/lib/clipboard';
 import CreateUserModal from '@/components/create-user-modal';
+import GenerateLicenseModal from '@/components/generate-license-modal';
 import UserDetailsModal from '@/components/user-details-modal';
 import ResetHwidModal from '@/components/reset-hwid-modal';
 import EditUserModal from '@/components/edit-user-modal';
@@ -67,6 +68,13 @@ export default function UsersPage() {
 
   // Modals
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [isGenerateLicenseOpen, setIsGenerateLicenseOpen] = useState(false);
+  const [licenseModalDefaults, setLicenseModalDefaults] = useState<{
+    userEmail: string;
+    appId: string;
+    subscription?: string;
+    allowedDevices?: string;
+  } | null>(null);
   const [isViewModalOpen, setIsViewModalOpen] = useState(false);
   const [isResetPasswordModalOpen, setIsResetPasswordModalOpen] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
@@ -1136,7 +1144,34 @@ export default function UsersPage() {
         selectedApplicationId={selectedAppId !== 'all' ? selectedAppId : (applications[0]?.id || '')}
         applications={applications.map((a) => ({ id: a.id, name: a.name, client_id: a.client_id }))}
         onUserCreated={() => {
-          fetchUsers(1);
+          fetchUsers(currentPage);
+        }}
+        onOpenCreateLicense={(createdUser, licConfig) => {
+          setLicenseModalDefaults({
+            userEmail: createdUser.email,
+            appId: createdUser.application_id || (selectedAppId !== 'all' ? selectedAppId : applications[0]?.id || ''),
+            subscription: licConfig?.subscription,
+            allowedDevices: licConfig?.allowedDevices
+          });
+          setIsGenerateLicenseOpen(true);
+        }}
+      />
+
+      {/* SEPARATE STANDALONE LICENSE CREATION MODAL */}
+      <GenerateLicenseModal
+        isOpen={isGenerateLicenseOpen}
+        onClose={() => {
+          setIsGenerateLicenseOpen(false);
+          setLicenseModalDefaults(null);
+        }}
+        applications={applications.map((a) => ({ id: a.id, name: a.name, client_id: a.client_id }))}
+        selectedApplicationId={licenseModalDefaults?.appId || (selectedAppId !== 'all' ? selectedAppId : applications[0]?.id || '')}
+        initialUserEmail={licenseModalDefaults?.userEmail}
+        initialSubscription={licenseModalDefaults?.subscription}
+        initialAllowedDevices={licenseModalDefaults?.allowedDevices}
+        onLicensesGenerated={() => {
+          fetchUsers(currentPage);
+          showToast('License generated and linked to user successfully.');
         }}
       />
 

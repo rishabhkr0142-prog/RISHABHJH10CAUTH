@@ -28,6 +28,9 @@ interface GenerateLicenseModalProps {
   onLicensesGenerated?: (licenses: any[]) => void;
   applications: ApplicationOption[];
   selectedApplicationId?: string;
+  initialUserEmail?: string;
+  initialSubscription?: string;
+  initialAllowedDevices?: string;
 }
 
 export default function GenerateLicenseModal({
@@ -35,7 +38,10 @@ export default function GenerateLicenseModal({
   onClose,
   onLicensesGenerated,
   applications,
-  selectedApplicationId
+  selectedApplicationId,
+  initialUserEmail,
+  initialSubscription,
+  initialAllowedDevices
 }: GenerateLicenseModalProps) {
   // Form fields
   const [appId, setAppId] = useState('');
@@ -82,15 +88,21 @@ export default function GenerateLicenseModal({
       setErrorMessage(null);
       setCopiedAll(false);
       setCopiedKeyIndex(null);
-      setNote('');
-      setSelectedUserEmail('');
+      setNote(initialUserEmail || '');
+      setSelectedUserEmail(initialUserEmail || '');
+      if (initialSubscription) {
+        setSubscription(initialSubscription);
+      }
+      if (initialAllowedDevices) {
+        setAllowedDevices(initialAllowedDevices);
+      }
       setHwidLock(true);
       setGenerateToken(false);
       if (selectedApplicationId) {
         setAppId(selectedApplicationId);
       }
     }
-  }, [isOpen, selectedApplicationId]);
+  }, [isOpen, selectedApplicationId, initialUserEmail, initialSubscription, initialAllowedDevices]);
 
   // Load users for target application to support explicit user-license assignment
   useEffect(() => {
@@ -100,13 +112,17 @@ export default function GenerateLicenseModal({
         .then((data) => {
           if (Array.isArray(data.users)) {
             setAppUsers(data.users);
+            if (initialUserEmail) {
+              setSelectedUserEmail(initialUserEmail);
+              setNote(initialUserEmail);
+            }
           } else {
             setAppUsers([]);
           }
         })
         .catch(() => setAppUsers([]));
     }
-  }, [isOpen, appId]);
+  }, [isOpen, appId, initialUserEmail]);
 
   if (!isOpen) return null;
 
