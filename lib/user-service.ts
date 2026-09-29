@@ -1,5 +1,5 @@
-import { getSubscriptionDetails } from '@/lib/subscriptions';
-import type { License, LicenseStatus, EndUser, Application } from '@/lib/supabase/types';
+import { getSubscriptionDetails } from './subscriptions.ts';
+import type { License, LicenseStatus, EndUser, Application } from './supabase/types.ts';
 
 export interface UserLicenseData {
   id: string | null;
