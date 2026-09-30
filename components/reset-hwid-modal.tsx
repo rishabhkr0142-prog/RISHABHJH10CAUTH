@@ -14,6 +14,7 @@ export interface ResetHwidTarget {
   boundDeviceCount?: number;
   allowedDevices?: number;
   licenseId?: string; // when type === 'user', optional associated license id
+  hasLicense?: boolean;
 }
 
 interface ResetHwidModalProps {
@@ -21,21 +22,35 @@ interface ResetHwidModalProps {
   onClose: () => void;
   target: ResetHwidTarget | null;
   onSuccess: () => void;
+  onAssignLicense?: (target: ResetHwidTarget) => void;
 }
 
 export default function ResetHwidModal({
   isOpen,
   onClose,
   target,
-  onSuccess
+  onSuccess,
+  onAssignLicense
 }: ResetHwidModalProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   if (!isOpen || !target) return null;
 
+  const hasLicense =
+    target.hasLicense !== undefined
+      ? target.hasLicense
+      : target.type === 'license'
+      ? true
+      : Boolean(
+          target.licenseId ||
+            (target.maskedLicenseKey &&
+              target.maskedLicenseKey !== 'Unassigned' &&
+              target.maskedLicenseKey !== 'No License')
+        );
+
   async function handleConfirmReset() {
-    if (!target || isSubmitting) return;
+    if (!target || !hasLicense || isSubmitting) return;
     setIsSubmitting(true);
     setError(null);
 
@@ -47,7 +62,10 @@ export default function ResetHwidModal({
 
       const res = await fetch(endpoint, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          licenseId: target.licenseId || undefined
+        })
       });
 
       const data = await res.json();
@@ -80,7 +98,7 @@ export default function ResetHwidModal({
             </div>
             <div>
               <h3 className="text-base font-bold text-white tracking-tight">
-                Reset HWID?
+                Reset HWID
               </h3>
               <p className="text-xs text-[#888888] mt-0.5">
                 Device &amp; Hardware Binding Management
@@ -103,86 +121,121 @@ export default function ResetHwidModal({
           </div>
         )}
 
-        {/* Safety Check Target Card */}
-        <div className="p-4 rounded-xl bg-[#111111] border border-[#242424] space-y-3">
-          <div className="flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-[#727275] border-b border-[#1e1e1e] pb-2">
-            <span>Target Verification</span>
-            <span className="text-orange-400/80">Safety Check</span>
-          </div>
-
-          <div className="grid grid-cols-2 gap-2.5 text-xs">
-            <div>
-              <span className="text-[11px] text-[#727275] block">User:</span>
-              <span className="font-medium text-white truncate block" title={target.userIdentifier || '—'}>
-                {target.userIdentifier || '—'}
-              </span>
+        {!hasLicense ? (
+          <div className="p-5 rounded-xl bg-[#1a1412] border border-[#ff5f15]/20 space-y-4">
+            <div className="flex items-center gap-2.5 text-[#ff7f45]">
+              <AlertCircle className="h-5 w-5 shrink-0" />
+              <span className="font-semibold text-sm">No Assigned License</span>
             </div>
-
-            <div>
-              <span className="text-[11px] text-[#727275] block">Application:</span>
-              <span className="font-medium text-white truncate block" title={target.applicationName}>
-                {target.applicationName}
-              </span>
-            </div>
-
-            <div>
-              <span className="text-[11px] text-[#727275] block">License:</span>
-              <span className="font-mono text-zinc-300 font-semibold select-all">
-                {target.maskedLicenseKey}
-              </span>
-            </div>
-
-            <div>
-              <span className="text-[11px] text-[#727275] block">Current HWID status:</span>
-              {target.isBound ? (
-                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-blue-500/10 text-blue-400 border border-blue-500/20">
-                  <span className="h-1.5 w-1.5 rounded-full bg-blue-400 animate-pulse" />
-                  Bound ({deviceCountDisplay})
-                </span>
-              ) : (
-                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-zinc-800 text-zinc-400 border border-zinc-700">
-                  <span className="h-1.5 w-1.5 rounded-full bg-zinc-500" />
-                  Not Bound
-                </span>
-              )}
+            <p className="text-xs text-[#999999] leading-relaxed">
+              This user does not have an assigned License, so there is no HWID binding to reset.
+            </p>
+            <div className="pt-2 flex items-center justify-end gap-3">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-4 py-2 rounded-xl bg-[#1f1f1f] hover:bg-[#282828] border border-[#2e2e2e] text-xs font-medium text-white transition-colors cursor-pointer"
+              >
+                Close
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  if (onAssignLicense) {
+                    onAssignLicense(target);
+                  }
+                }}
+                className="px-4 py-2 rounded-xl bg-[#ff5f15] hover:bg-[#e0500e] text-xs font-semibold text-white shadow-md transition-colors cursor-pointer"
+              >
+                Assign License
+              </button>
             </div>
           </div>
-        </div>
+        ) : (
+          <>
+            {/* Safety Check Target Card */}
+            <div className="p-4 rounded-xl bg-[#111111] border border-[#242424] space-y-3">
+              <div className="flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-[#727275] border-b border-[#1e1e1e] pb-2">
+                <span>Target Verification</span>
+                <span className="text-orange-400/80">Safety Check</span>
+              </div>
 
-        {/* Explanation text matching user requirement */}
-        <p className="text-xs text-[#888888] leading-relaxed">
-          This will remove the current device/HWID binding from this license. The license itself, subscription, expiry date and other settings will remain unchanged. The next authorized device can bind again.
-        </p>
+              <div className="grid grid-cols-2 gap-2.5 text-xs">
+                <div>
+                  <span className="text-[11px] text-[#727275] block">User:</span>
+                  <span className="font-medium text-white truncate block" title={target.userIdentifier || '—'}>
+                    {target.userIdentifier || '—'}
+                  </span>
+                </div>
 
-        {/* Action Buttons */}
-        <div className="flex items-center justify-end gap-3 pt-2">
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={isSubmitting}
-            className="px-4 py-2 rounded-xl bg-[#1f1f1f] hover:bg-[#282828] border border-[#2e2e2e] text-xs font-medium text-white transition-colors cursor-pointer disabled:opacity-50"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={handleConfirmReset}
-            disabled={isSubmitting}
-            className="inline-flex items-center gap-1.5 px-5 py-2 rounded-xl bg-orange-600 hover:bg-orange-500 text-white text-xs font-semibold shadow-lg transition-all active:scale-[0.99] disabled:opacity-50 cursor-pointer"
-          >
-            {isSubmitting ? (
-              <>
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                <span>Resetting HWID...</span>
-              </>
-            ) : (
-              <>
-                <RotateCcw className="h-3.5 w-3.5" />
-                <span>Reset HWID</span>
-              </>
-            )}
-          </button>
-        </div>
+                <div>
+                  <span className="text-[11px] text-[#727275] block">Application:</span>
+                  <span className="font-medium text-white truncate block" title={target.applicationName}>
+                    {target.applicationName}
+                  </span>
+                </div>
+
+                <div>
+                  <span className="text-[11px] text-[#727275] block">License:</span>
+                  <span className="font-mono text-zinc-300 font-semibold select-all">
+                    {target.maskedLicenseKey}
+                  </span>
+                </div>
+
+                <div>
+                  <span className="text-[11px] text-[#727275] block">Current HWID status:</span>
+                  {target.isBound ? (
+                    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                      <span className="h-1.5 w-1.5 rounded-full bg-blue-400 animate-pulse" />
+                      Bound ({deviceCountDisplay})
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-zinc-800 text-zinc-400 border border-zinc-700">
+                      <span className="h-1.5 w-1.5 rounded-full bg-zinc-500" />
+                      Not Bound
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Explanation text matching user requirement */}
+            <p className="text-xs text-[#888888] leading-relaxed">
+              This will remove the current device/HWID binding from this license. The license itself, subscription, expiry date and other settings will remain unchanged. The next authorized device can bind again.
+            </p>
+
+            {/* Action Buttons */}
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                type="button"
+                onClick={onClose}
+                disabled={isSubmitting}
+                className="px-4 py-2 rounded-xl bg-[#1f1f1f] hover:bg-[#282828] border border-[#2e2e2e] text-xs font-medium text-white transition-colors cursor-pointer disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmReset}
+                disabled={isSubmitting}
+                className="inline-flex items-center gap-1.5 px-5 py-2 rounded-xl bg-orange-600 hover:bg-orange-500 text-white text-xs font-semibold shadow-lg transition-all active:scale-[0.99] disabled:opacity-50 cursor-pointer"
+              >
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    <span>Resetting HWID...</span>
+                  </>
+                ) : (
+                  <>
+                    <RotateCcw className="h-3.5 w-3.5" />
+                    <span>Reset HWID</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

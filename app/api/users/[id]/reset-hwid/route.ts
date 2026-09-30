@@ -33,12 +33,14 @@ export async function POST(
 
     const body = await request.json().catch(() => ({}));
     const targetHwid = body?.hwid ? String(body.hwid).trim() : null;
+    const licenseId = body?.licenseId ? String(body.licenseId).trim() : null;
 
     const result = await resetUserHwidService({
       userId,
       applicationId: user.application_id,
       ownerId: auth.profile.id,
       targetHwid,
+      licenseId,
       actor: auth.profile.email || 'owner'
     });
 

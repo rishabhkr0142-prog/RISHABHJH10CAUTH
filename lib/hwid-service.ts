@@ -148,12 +148,19 @@ export interface ResetUserHwidOptions {
   applicationId: string;
   ownerId: string;
   targetHwid?: string | null;
+  licenseId?: string | null;
   actor?: string;
 }
 
 /**
  * Resets the HWID / device binding for a user's associated license.
  * Resolves the user -> license relationship safely.
+ * Strict server-side verification:
+ * 1. Admin owns application
+ * 2. User belongs to application
+ * 3. License belongs to application
+ * 4. License is verified to belong to this user
+ * 5. Rejects cross-application tampering
  * Does NOT reset user account, delete user, revoke license, or alter expiry.
  */
 export async function resetUserHwidService({
@@ -161,6 +168,7 @@ export async function resetUserHwidService({
   applicationId,
   ownerId,
   targetHwid = null,
+  licenseId = null,
   actor = 'owner'
 }: ResetUserHwidOptions) {
   if (!userId || typeof userId !== 'string') {
@@ -191,7 +199,7 @@ export async function resetUserHwidService({
     );
   }
 
-  // 2. Fetch user
+  // 2. Fetch user and verify they belong to this application
   const { data: userRecord, error: userErr } = await admin
     .from('application_users')
     .select('id, application_id, username, email, status')
@@ -200,34 +208,79 @@ export async function resetUserHwidService({
     .maybeSingle();
 
   if (userErr || !userRecord) {
-    throw new HwidResetError('User not found', 'USER_NOT_FOUND', 404);
+    throw new HwidResetError('User not found in this application', 'USER_NOT_FOUND', 404);
   }
 
-  // 3. Find user's associated license
-  // Same matching logic as enrichUsersWithData in lib/user-service.ts
   const cleanEmail = (userRecord.email || '').toLowerCase().trim();
   const cleanUsername = (userRecord.username || '').toLowerCase().trim();
 
-  const { data: appLicenses, error: licLookupErr } = await admin
-    .from('licenses')
-    .select('*')
-    .eq('application_id', applicationId);
+  // 3. Resolve and verify the user's associated license
+  let matchedLicense: License | null = null;
 
-  if (licLookupErr) {
-    throw new HwidResetError('Failed to lookup user license', 'DATABASE_ERROR', 500);
-  }
+  if (licenseId && typeof licenseId === 'string' && licenseId.trim()) {
+    const cleanLicId = licenseId.trim();
+    const { data: licRecord, error: licErr } = await admin
+      .from('licenses')
+      .select('*')
+      .eq('id', cleanLicId)
+      .maybeSingle();
 
-  const matchedLicense = (appLicenses || []).find((lic: License) => {
-    if (!lic.note) return false;
-    const cleanNote = lic.note.toLowerCase().trim();
-    return (
-      cleanNote === cleanEmail ||
-      cleanNote === userId ||
-      (cleanUsername && cleanNote === cleanUsername) ||
-      cleanNote.includes(cleanEmail) ||
-      cleanNote.includes(userId)
+    if (licErr || !licRecord) {
+      throw new HwidResetError('License not found', 'LICENSE_NOT_FOUND', 404);
+    }
+
+    // Safety: Verify license belongs to the SAME application
+    if (licRecord.application_id !== applicationId) {
+      throw new HwidResetError(
+        'License does not belong to the target application',
+        'CROSS_APPLICATION_FORBIDDEN',
+        403
+      );
+    }
+
+    // Safety: Verify license is assigned to this user
+    const licNote = (licRecord.note || '').toLowerCase().trim();
+    const isAssigned = Boolean(
+      licNote &&
+        (licNote === cleanEmail ||
+          licNote === userId ||
+          (cleanUsername && licNote === cleanUsername) ||
+          licNote.includes(cleanEmail) ||
+          licNote.includes(userId))
     );
-  });
+
+    if (!isAssigned) {
+      throw new HwidResetError(
+        'License is not assigned to this user',
+        'LICENSE_NOT_ASSIGNED_TO_USER',
+        400
+      );
+    }
+
+    matchedLicense = licRecord as License;
+  } else {
+    // Lookup user's assigned license in this application
+    const { data: appLicenses, error: licLookupErr } = await admin
+      .from('licenses')
+      .select('*')
+      .eq('application_id', applicationId);
+
+    if (licLookupErr) {
+      throw new HwidResetError('Failed to lookup user license', 'DATABASE_ERROR', 500);
+    }
+
+    matchedLicense = (appLicenses || []).find((lic: License) => {
+      if (!lic.note) return false;
+      const cleanNote = lic.note.toLowerCase().trim();
+      return (
+        cleanNote === cleanEmail ||
+        cleanNote === userId ||
+        (cleanUsername && cleanNote === cleanUsername) ||
+        cleanNote.includes(cleanEmail) ||
+        cleanNote.includes(userId)
+      );
+    }) || null;
+  }
 
   if (!matchedLicense) {
     throw new HwidResetError(
@@ -237,7 +290,7 @@ export async function resetUserHwidService({
     );
   }
 
-  // 4. Reset the matched license HWID
+  // 4. Reset the matched license HWID (only clears device_hwids and used_devices)
   const resetResult = await resetLicenseHwidService({
     licenseId: matchedLicense.id,
     ownerId,

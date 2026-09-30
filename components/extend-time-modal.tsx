@@ -9,6 +9,7 @@ interface ExtendTimeModalProps {
   onClose: () => void;
   user: EnrichedUser | null;
   onSuccess: () => void;
+  onOpenAssignLicense?: (user: EnrichedUser) => void;
 }
 
 type DurationType = '1h' | '1d' | '7d' | '30d' | 'custom';
@@ -17,7 +18,8 @@ export default function ExtendTimeModal({
   isOpen,
   onClose,
   user,
-  onSuccess
+  onSuccess,
+  onOpenAssignLicense
 }: ExtendTimeModalProps) {
   const [selectedDuration, setSelectedDuration] = useState<DurationType>('7d');
   const [customAmount, setCustomAmount] = useState<number>(14);
@@ -28,6 +30,8 @@ export default function ExtendTimeModal({
   const hasLicense = Boolean(user?.license && user.license.id);
 
   // Calculate new expiry date dynamically
+  // If active: existingLicense.expiry + duration
+  // If already expired: now + duration
   const calculatedExpiry = useMemo(() => {
     if (!hasLicense || !user?.license) return null;
 
@@ -148,16 +152,15 @@ export default function ExtendTimeModal({
         )}
 
         {!hasLicense ? (
-          <div className="p-5 rounded-xl bg-[#1a1412] border border-[#ff5f15]/20 space-y-3">
+          <div className="p-5 rounded-xl bg-[#1a1412] border border-[#ff5f15]/20 space-y-4">
             <div className="flex items-center gap-2.5 text-[#ff7f45]">
               <ShieldAlert className="h-5 w-5 shrink-0" />
               <span className="font-semibold text-sm">No Assigned License</span>
             </div>
             <p className="text-xs text-[#999999] leading-relaxed">
-              This user does not have an assigned License subscription. Users and Licenses are separate resources.
-              To extend an expiry, please assign a License to this user first.
+              This user does not have an assigned License subscription. Assign a License to this user before extending the expiry.
             </p>
-            <div className="pt-2 flex justify-end">
+            <div className="pt-2 flex items-center justify-end gap-3">
               <button
                 type="button"
                 onClick={onClose}
@@ -165,34 +168,60 @@ export default function ExtendTimeModal({
               >
                 Close
               </button>
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  if (onOpenAssignLicense && user) {
+                    onOpenAssignLicense(user);
+                  }
+                }}
+                className="px-4 py-2 rounded-xl bg-[#ff5f15] hover:bg-[#e0500e] text-xs font-semibold text-white shadow-md transition-colors cursor-pointer"
+              >
+                Assign License
+              </button>
             </div>
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="space-y-4">
-            {/* Current Status */}
-            <div className="p-3.5 rounded-xl bg-[#0e0e0e] border border-[#242424] flex items-center justify-between text-xs">
-              <span className="text-[#777777]">Current Expiry</span>
-              <span className="text-white font-medium">
-                {user.license?.expires_at ? formatDateTimePreview(new Date(user.license.expires_at)) : 'No Expiry (Lifetime)'}
-              </span>
+            {/* Current Status Display */}
+            <div className="p-3.5 rounded-xl bg-[#0e0e0e] border border-[#242424] space-y-2.5 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="text-[#777777]">Current Subscription</span>
+                <span className="text-[#ff5f15] font-semibold uppercase">
+                  {user.license?.subscription_name || user.license?.subscription || 'Standard'}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-[#777777]">Current Expiry</span>
+                <span className="text-white font-medium">
+                  {user.license?.expires_at ? formatDateTimePreview(new Date(user.license.expires_at)) : 'No Expiry (Lifetime)'}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-[#777777]">Remaining time</span>
+                <span className="text-white font-medium">
+                  {user.license?.days_remaining_text || (user.license?.expires_at ? 'Active' : 'Never expires')}
+                </span>
+              </div>
             </div>
 
-            {/* Quick Presets */}
+            {/* Quick Duration Buttons */}
             <div>
               <label className="block text-[11px] font-bold text-[#888888] uppercase tracking-wider mb-2">
-                Extend Duration
+                Quick duration
               </label>
               <div className="grid grid-cols-5 gap-2">
                 {(['1h', '1d', '7d', '30d', 'custom'] as const).map((key) => {
                   const label =
                     key === '1h'
-                      ? '1 Hour'
+                      ? '1H'
                       : key === '1d'
-                      ? '1 Day'
+                      ? '1D'
                       : key === '7d'
-                      ? '7 Days'
+                      ? '7D'
                       : key === '30d'
-                      ? '30 Days'
+                      ? '30D'
                       : 'Custom';
                   const active = selectedDuration === key;
                   return (
@@ -200,7 +229,7 @@ export default function ExtendTimeModal({
                       key={key}
                       type="button"
                       onClick={() => setSelectedDuration(key)}
-                      className={`py-2 px-1 text-center rounded-xl text-xs font-medium border transition-all cursor-pointer ${
+                      className={`py-2 px-1 text-center rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
                         active
                           ? 'bg-[#ff5f15] text-white border-[#ff5f15] shadow-sm'
                           : 'bg-[#121212] text-[#aaaaaa] border-[#262626] hover:text-white hover:border-[#383838]'

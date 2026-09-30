@@ -183,6 +183,21 @@ export async function PATCH(
     const { data: targetUser, error: userErr } = await userQuery.maybeSingle();
 
     if (userErr || !targetUser) {
+      if (targetUserId) {
+        const { data: otherAppUser } = await admin
+          .from('application_users')
+          .select('id, application_id')
+          .eq('id', targetUserId)
+          .maybeSingle();
+
+        if (otherAppUser && otherAppUser.application_id !== license.application_id) {
+          return NextResponse.json(
+            { error: 'Cannot assign license to user from a different application' },
+            { status: 400 }
+          );
+        }
+      }
+
       return NextResponse.json(
         { error: 'User not found in this application' },
         { status: 404 }

@@ -9,6 +9,7 @@ import EditUserModal from '@/components/edit-user-modal';
 import ExtendTimeModal from '@/components/extend-time-modal';
 import SubtractTimeModal from '@/components/subtract-time-modal';
 import ResetHwidModal, { type ResetHwidTarget } from '@/components/reset-hwid-modal';
+import AssignLicenseModal from '@/components/assign-license-modal';
 import ImportExportModal from '@/components/import-export-modal';
 import { formatTableDateTime, type EnrichedUser } from '@/lib/user-service';
 import {
@@ -147,6 +148,8 @@ export default function UsersPage() {
   const [isExtendTimeOpen, setIsExtendTimeOpen] = useState(false);
   const [isSubtractTimeOpen, setIsSubtractTimeOpen] = useState(false);
   const [isResetHwidOpen, setIsResetHwidOpen] = useState(false);
+  const [isAssignLicenseOpen, setIsAssignLicenseOpen] = useState(false);
+  const [assignLicenseUser, setAssignLicenseUser] = useState<EnrichedUser | null>(null);
   const [isImportExportOpen, setIsImportExportOpen] = useState(false);
   const [isBanModalOpen, setIsBanModalOpen] = useState(false);
   const [isPauseModalOpen, setIsPauseModalOpen] = useState(false);
@@ -207,7 +210,9 @@ export default function UsersPage() {
         !isCreateModalOpen &&
         !isEditModalOpen &&
         !isExtendTimeOpen &&
-        !isSubtractTimeOpen
+        !isSubtractTimeOpen &&
+        !isResetHwidOpen &&
+        !isAssignLicenseOpen
       ) {
         const activeEl = document.activeElement;
         const isInput =
@@ -517,8 +522,18 @@ export default function UsersPage() {
     }
   }
 
+  function handleOpenAssignLicense(user: EnrichedUser) {
+    closeActionMenu();
+    setIsExtendTimeOpen(false);
+    setIsResetHwidOpen(false);
+    setAssignLicenseUser(user);
+    setIsAssignLicenseOpen(true);
+  }
+
   function openResetHwidModal(user: EnrichedUser) {
     closeActionMenu();
+    setActiveUser(user);
+    const hasLic = Boolean(user.license && user.license.id);
     setActiveResetHwidTarget({
       type: 'user',
       id: user.id,
@@ -529,7 +544,8 @@ export default function UsersPage() {
       isBound: Boolean(user.license?.device_hwids && user.license.device_hwids.length > 0),
       boundDeviceCount: user.license?.used_devices ?? (user.license?.device_hwids?.length || 0),
       allowedDevices: user.license?.allowed_devices ?? 1,
-      licenseId: user.license?.id || undefined
+      licenseId: user.license?.id || undefined,
+      hasLicense: hasLic
     });
     setIsResetHwidOpen(true);
   }
@@ -1131,6 +1147,7 @@ export default function UsersPage() {
           showToast('License expiry extended successfully');
           fetchUsers(currentPage);
         }}
+        onOpenAssignLicense={(targetUser) => handleOpenAssignLicense(targetUser)}
       />
 
       {/* 4. Subtract Time Modal */}
@@ -1153,10 +1170,30 @@ export default function UsersPage() {
         onClose={() => {
           setIsResetHwidOpen(false);
           setActiveResetHwidTarget(null);
+          setActiveUser(null);
         }}
         target={activeResetHwidTarget}
         onSuccess={() => {
           showToast('HWID binding reset successfully');
+          fetchUsers(currentPage);
+        }}
+        onAssignLicense={() => {
+          if (activeUser) {
+            handleOpenAssignLicense(activeUser);
+          }
+        }}
+      />
+
+      {/* 5.5. Assign License Modal */}
+      <AssignLicenseModal
+        isOpen={isAssignLicenseOpen}
+        onClose={() => {
+          setIsAssignLicenseOpen(false);
+          setAssignLicenseUser(null);
+        }}
+        user={assignLicenseUser}
+        onLicenseAssigned={() => {
+          showToast('License assigned to user successfully');
           fetchUsers(currentPage);
         }}
       />
